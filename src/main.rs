@@ -9,7 +9,7 @@ use std::io::{Write}; // stderr unused
 // Our 12 words - BIP39 indices
 const WORDS: [u16; 12] = [112, 146, 238, 608, 759, 905, 1251, 1348, 1437, 1559, 1597, 1841];
 const TOTAL_PERMS: u64 = 479_001_600;
-const BATCH_SIZE: usize = 64; // Restored to 64 with optimizations enabled
+const BATCH_SIZE: usize = 1; // Reduced to 1 to fix CL_OUT_OF_RESOURCES
 
 const WORD_STRINGS: [&str; 12] = [
     "asset", "basket", "capital", "execute", "gauge", "improve",
