@@ -1,4 +1,5 @@
 
+__attribute__((noinline))
 static void secp256k1_ecmult_gen(secp256k1_gej *r,  secp256k1_scalar *gn) {
     secp256k1_ge add;
     secp256k1_ge_storage adds;
@@ -48,6 +49,7 @@ static void secp256k1_pubkey_save(secp256k1_pubkey* pubkey, secp256k1_ge* ge) {
   secp256k1_fe_get_b32(pubkey->data + 32, &ge->y);
 }
 
+__attribute__((noinline))
 int secp256k1_ec_pubkey_create(secp256k1_pubkey *pubkey, unsigned char *seckey) {
     secp256k1_gej pj;
     secp256k1_ge p;

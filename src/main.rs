@@ -99,7 +99,7 @@ fn main() {
     let program = core::create_program_with_source(&context, &[src]).unwrap();
     
     dbg_print!("[DBG] Building program...");
-    if let Err(e) = core::build_program(&program, Some(&[device_id]), &CString::new("").unwrap(), None, None) {
+    if let Err(e) = core::build_program(&program, Some(&[device_id]), &CString::new("-cl-mad-enable").unwrap(), None, None) {
         eprintln!("Kernel build error: {:?}", e);
         return;
     }
