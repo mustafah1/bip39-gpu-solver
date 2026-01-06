@@ -90,6 +90,7 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
   sha512_bytes(key_previous_concat, 192, sha512_result);
   xor_seed_with_round(seed, sha512_result);
 
+  /*
   #pragma unroll 1
   for(int x=1;x<2048;x++){
     copy_pad_previous(ipad_key, sha512_result, key_previous_concat);
@@ -98,6 +99,7 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
     sha512_bytes(key_previous_concat, 192, sha512_result);
     xor_seed_with_round(seed, sha512_result);
   }
+  */
 
   uchar network = BITCOIN_MAINNET;
   extended_private_key_t master_private;

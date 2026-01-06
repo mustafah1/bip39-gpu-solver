@@ -73,6 +73,7 @@ fn main() {
     println!("║         pair price require sell share trend                ║");
     println!("║ Total:  479,001,600 permutations                           ║");
     println!("║ Batch:  {} GPU work items/call                           ║", BATCH_SIZE);
+    println!("║ ⚠️ WARNING: PBKDF2 LOOP DISABLED FOR DEBUGGING ⚠️          ║");
     println!("╚════════════════════════════════════════════════════════════╝");
     
     dbg_print!("[DBG] Getting platform...");
