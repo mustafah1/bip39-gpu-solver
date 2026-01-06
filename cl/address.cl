@@ -83,13 +83,13 @@ void new_master_from_seed(uchar network, uchar *seed, extended_private_key_t * m
   memcpy_offset(master->chain_code, hmacsha512_result, 32, 32);
 }
 
-void public_from_private(extended_private_key_t *priv, extended_public_key_t *pub) {
+void public_from_private(extended_private_key_t *priv, extended_public_key_t *pub, __global const secp256k1_ge_storage* prec) {
   pub->network = priv->network;
   pub->depth = priv->depth;
   pub->child_number = priv->child_number;
   memcpy(&pub->parent_fingerprint,&priv->parent_fingerprint, 4);
   memcpy(&pub->chain_code, &priv->chain_code, 32);
-  secp256k1_ec_pubkey_create(&pub->public_key.key, &priv->private_key.key);
+  secp256k1_ec_pubkey_create(&pub->public_key.key, &priv->private_key.key, prec);
 }
 
 void serialized_public_key(extended_public_key_t *pub, uchar *serialized_key) {

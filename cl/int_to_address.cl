@@ -2,7 +2,8 @@
 
 // Batch kernel - accepts arrays of pre-computed mnemonic encodings
 __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mnemonic_lo_arr, 
-                             __global uchar * target_mnemonic, __global uchar * found_idx) {
+                             __global uchar * target_mnemonic, __global uchar * found_idx,
+                             __global const secp256k1_ge_storage* prec_table) {
   ulong idx = get_global_id(0);
   
   ulong mnemonic_hi = mnemonic_hi_arr[idx];
@@ -115,7 +116,7 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
   hardened_private_child_from_private(&target_key, &target_key, 0);
   normal_private_child_from_private(&target_key, &target_key, 0);
   normal_private_child_from_private(&target_key, &target_key, 0);
-  public_from_private(&target_key, &target_public_key);
+  public_from_private(&target_key, &target_public_key, prec_table);
 
   uchar raw_address[25] = {0};
   p2shwpkh_address_for_public_key(&target_public_key, raw_address);

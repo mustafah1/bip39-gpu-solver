@@ -1,6 +1,6 @@
 
 __attribute__((noinline))
-static void secp256k1_ecmult_gen(secp256k1_gej *r,  secp256k1_scalar *gn) {
+static void secp256k1_ecmult_gen(secp256k1_gej *r,  secp256k1_scalar *gn, __global const secp256k1_ge_storage* prec) {
     secp256k1_ge add;
     secp256k1_ge_storage adds;
     int bits;
@@ -17,23 +17,25 @@ static void secp256k1_ecmult_gen(secp256k1_gej *r,  secp256k1_scalar *gn) {
             mask0 = (i == bits) + ~((uint32_t)0);
             mask1 = ~mask0;
             
-            adds.x.n[0] = (adds.x.n[0] & mask0) | (prec[j][i].x.n[0] & mask1);
-            adds.x.n[1] = (adds.x.n[1] & mask0) | (prec[j][i].x.n[1] & mask1);
-            adds.x.n[2] = (adds.x.n[2] & mask0) | (prec[j][i].x.n[2] & mask1);
-            adds.x.n[3] = (adds.x.n[3] & mask0) | (prec[j][i].x.n[3] & mask1);
-            adds.x.n[4] = (adds.x.n[4] & mask0) | (prec[j][i].x.n[4] & mask1);
-            adds.x.n[5] = (adds.x.n[5] & mask0) | (prec[j][i].x.n[5] & mask1);
-            adds.x.n[6] = (adds.x.n[6] & mask0) | (prec[j][i].x.n[6] & mask1);
-            adds.x.n[7] = (adds.x.n[7] & mask0) | (prec[j][i].x.n[7] & mask1);
+            int idx = (j << 2) + i; // j*4 + i
+            
+            adds.x.n[0] = (adds.x.n[0] & mask0) | (prec[idx].x.n[0] & mask1);
+            adds.x.n[1] = (adds.x.n[1] & mask0) | (prec[idx].x.n[1] & mask1);
+            adds.x.n[2] = (adds.x.n[2] & mask0) | (prec[idx].x.n[2] & mask1);
+            adds.x.n[3] = (adds.x.n[3] & mask0) | (prec[idx].x.n[3] & mask1);
+            adds.x.n[4] = (adds.x.n[4] & mask0) | (prec[idx].x.n[4] & mask1);
+            adds.x.n[5] = (adds.x.n[5] & mask0) | (prec[idx].x.n[5] & mask1);
+            adds.x.n[6] = (adds.x.n[6] & mask0) | (prec[idx].x.n[6] & mask1);
+            adds.x.n[7] = (adds.x.n[7] & mask0) | (prec[idx].x.n[7] & mask1);
 
-            adds.y.n[0] = (adds.y.n[0] & mask0) | (prec[j][i].y.n[0] & mask1);
-            adds.y.n[1] = (adds.y.n[1] & mask0) | (prec[j][i].y.n[1] & mask1);
-            adds.y.n[2] = (adds.y.n[2] & mask0) | (prec[j][i].y.n[2] & mask1);
-            adds.y.n[3] = (adds.y.n[3] & mask0) | (prec[j][i].y.n[3] & mask1);
-            adds.y.n[4] = (adds.y.n[4] & mask0) | (prec[j][i].y.n[4] & mask1);
-            adds.y.n[5] = (adds.y.n[5] & mask0) | (prec[j][i].y.n[5] & mask1);
-            adds.y.n[6] = (adds.y.n[6] & mask0) | (prec[j][i].y.n[6] & mask1);
-            adds.y.n[7] = (adds.y.n[7] & mask0) | (prec[j][i].y.n[7] & mask1);
+            adds.y.n[0] = (adds.y.n[0] & mask0) | (prec[idx].y.n[0] & mask1);
+            adds.y.n[1] = (adds.y.n[1] & mask0) | (prec[idx].y.n[1] & mask1);
+            adds.y.n[2] = (adds.y.n[2] & mask0) | (prec[idx].y.n[2] & mask1);
+            adds.y.n[3] = (adds.y.n[3] & mask0) | (prec[idx].y.n[3] & mask1);
+            adds.y.n[4] = (adds.y.n[4] & mask0) | (prec[idx].y.n[4] & mask1);
+            adds.y.n[5] = (adds.y.n[5] & mask0) | (prec[idx].y.n[5] & mask1);
+            adds.y.n[6] = (adds.y.n[6] & mask0) | (prec[idx].y.n[6] & mask1);
+            adds.y.n[7] = (adds.y.n[7] & mask0) | (prec[idx].y.n[7] & mask1);
         }
         secp256k1_ge_from_storage(&add, &adds);
         secp256k1_gej_add_ge(r, r, &add);
@@ -50,7 +52,7 @@ static void secp256k1_pubkey_save(secp256k1_pubkey* pubkey, secp256k1_ge* ge) {
 }
 
 __attribute__((noinline))
-int secp256k1_ec_pubkey_create(secp256k1_pubkey *pubkey, unsigned char *seckey) {
+int secp256k1_ec_pubkey_create(secp256k1_pubkey *pubkey, unsigned char *seckey, __global const secp256k1_ge_storage* prec) {
     secp256k1_gej pj;
     secp256k1_ge p;
     secp256k1_scalar sec;
@@ -63,7 +65,7 @@ int secp256k1_ec_pubkey_create(secp256k1_pubkey *pubkey, unsigned char *seckey) 
     
     secp256k1_scalar_cmov(&sec, &secp256k1_scalar_one, !ret);
 
-    secp256k1_ecmult_gen(&pj, &sec);
+    secp256k1_ecmult_gen(&pj, &sec, prec);
     secp256k1_ge_set_gej(&p, &pj);
     secp256k1_pubkey_save(pubkey, &p);
     
