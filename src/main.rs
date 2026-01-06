@@ -218,14 +218,41 @@ fn main() {
         }
 
         // Write inputs - use slices for actual batch size
-        unsafe {
-             core::enqueue_write_buffer(&queue, &hi_buf, true, 0, &hi_arr[0..actual_batch], None::<&core::Event>, None::<&mut core::Event>).unwrap();
-             core::enqueue_write_buffer(&queue, &lo_buf, true, 0, &lo_arr[0..actual_batch], None::<&core::Event>, None::<&mut core::Event>).unwrap();
+        let write_hi = unsafe {
+             core::enqueue_write_buffer(&queue, &hi_buf, true, 0, &hi_arr[0..actual_batch], None::<&core::Event>, None::<&mut core::Event>)
+        };
+        if let Err(e) = write_hi {
+            if is_out_of_resources(&e) && max_batch > 1 {
+                max_batch = (max_batch / 2).max(1);
+                eprintln!("[DBG] CL_OUT_OF_RESOURCES on write hi; reducing batch to {}", max_batch);
+                continue;
+            }
+            panic!("Write buffer (hi) error: {:?}", e);
+        }
+
+        let write_lo = unsafe {
+             core::enqueue_write_buffer(&queue, &lo_buf, true, 0, &lo_arr[0..actual_batch], None::<&core::Event>, None::<&mut core::Event>)
+        };
+        if let Err(e) = write_lo {
+            if is_out_of_resources(&e) && max_batch > 1 {
+                max_batch = (max_batch / 2).max(1);
+                eprintln!("[DBG] CL_OUT_OF_RESOURCES on write lo; reducing batch to {}", max_batch);
+                continue;
+            }
+            panic!("Write buffer (lo) error: {:?}", e);
         }
 
         found_result.fill(0);
-        unsafe {
-             core::enqueue_write_buffer(&queue, &found_buf, true, 0, &found_result, None::<&core::Event>, None::<&mut core::Event>).unwrap();
+        let write_found = unsafe {
+             core::enqueue_write_buffer(&queue, &found_buf, true, 0, &found_result, None::<&core::Event>, None::<&mut core::Event>)
+        };
+        if let Err(e) = write_found {
+            if is_out_of_resources(&e) && max_batch > 1 {
+                max_batch = (max_batch / 2).max(1);
+                eprintln!("[DBG] CL_OUT_OF_RESOURCES on write found; reducing batch to {}", max_batch);
+                continue;
+            }
+            panic!("Write buffer (found) error: {:?}", e);
         }
         
         // Arguments: 0=hi, 1=lo, 2=target, 3=found, 4=prec_table
