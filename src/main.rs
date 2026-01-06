@@ -1,7 +1,6 @@
 use std::fs;
 use std::ffi::CString;
 use ocl::{core, flags};
-use ocl::prm::cl_ulong;
 use ocl::enums::ArgVal;
 use ocl::builders::ContextProperties;
 use std::time::Instant;
