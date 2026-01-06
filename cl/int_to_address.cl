@@ -105,7 +105,7 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
   extended_public_key_t master_public;
 
   new_master_from_seed(network, seed, &master_private);
-  public_from_private(&master_private, &master_public);
+  public_from_private(&master_private, &master_public, prec_table);
 
   uchar serialized_master_public[33];
   serialized_public_key(&master_public, serialized_master_public);

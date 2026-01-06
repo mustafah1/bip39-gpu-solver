@@ -89,7 +89,7 @@ void public_from_private(extended_private_key_t *priv, extended_public_key_t *pu
   pub->child_number = priv->child_number;
   memcpy(&pub->parent_fingerprint,&priv->parent_fingerprint, 4);
   memcpy(&pub->chain_code, &priv->chain_code, 32);
-  secp256k1_ec_pubkey_create(pub->public_key.key, priv->private_key.key, prec);
+  secp256k1_ec_pubkey_create(&pub->public_key.key, priv->private_key.key, prec);
 }
 
 void serialized_public_key(extended_public_key_t *pub, uchar *serialized_key) {
