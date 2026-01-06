@@ -136,7 +136,7 @@ fn main() {
     
     dbg_print!("[DBG] Building program...");
     // We re-enable optimizations (-cl-mad-enable) because the kernel is now small enough!
-    if let Err(e) = core::build_program(&program, Some(&[device_id]), &CString::new("-cl-mad-enable").unwrap(), None, None) {
+    if let Err(e) = core::build_program(&program, Some(&[device_id]), &CString::new("-cl-opt-disable").unwrap(), None, None) {
         eprintln!("Kernel build error: {:?}", e);
         return;
     }
