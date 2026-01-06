@@ -1,5 +1,8 @@
 use std::fs;
 use std::ffi::CString;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::thread;
+use std::time::{Duration, Instant};
 use ocl::{core, flags};
 use ocl::enums::ArgVal;
 use ocl::builders::ContextProperties;
@@ -10,6 +13,8 @@ use std::io::{Write}; // stderr unused
 const WORDS: [u16; 12] = [112, 146, 238, 608, 759, 905, 1251, 1348, 1437, 1559, 1597, 1841];
 const TOTAL_PERMS: u64 = 479_001_600;
 const BATCH_SIZE: usize = 64; // Restored to 64 for optimized run
+const LOCAL_WORK_SIZE: usize = 1; // Limit workgroup size to reduce per-CU resource pressure
+const BUILD_HEARTBEAT_SECS: u64 = 10;
 
 const WORD_STRINGS: [&str; 12] = [
     "asset", "basket", "capital", "execute", "gauge", "improve",
@@ -135,11 +140,29 @@ fn main() {
     let program = core::create_program_with_source(&context, &[src]).unwrap();
     
     dbg_print!("[DBG] Building program...");
+    let build_done = Arc::new(AtomicBool::new(false));
+    let build_done_thread = Arc::clone(&build_done);
+    let build_start = Instant::now();
+    let heartbeat = thread::spawn(move || {
+        while !build_done_thread.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_secs(BUILD_HEARTBEAT_SECS));
+            if build_done_thread.load(Ordering::Relaxed) {
+                break;
+            }
+            let elapsed = build_start.elapsed().as_secs();
+            eprintln!("[DBG] Kernel build still running... {}s", elapsed);
+        }
+    });
+
     // We re-enable optimizations (-cl-mad-enable) because the kernel is now small enough!
     if let Err(e) = core::build_program(&program, Some(&[device_id]), &CString::new("-cl-opt-disable").unwrap(), None, None) {
+        build_done.store(true, Ordering::Relaxed);
+        let _ = heartbeat.join();
         eprintln!("Kernel build error: {:?}", e);
         return;
     }
+    build_done.store(true, Ordering::Relaxed);
+    let _ = heartbeat.join();
     
     dbg_print!("[DBG] Program built successfully!");
     println!("✅ Kernels compiled");
@@ -161,7 +184,7 @@ fn main() {
     let (hi_buf, lo_buf, found_buf, target_buf, prec_buf) = unsafe {
         let hb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, BATCH_SIZE, Some(&hi_arr)).unwrap();
         let lb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, BATCH_SIZE, Some(&lo_arr)).unwrap();
-        let fb = core::create_buffer(&context, flags::MEM_WRITE_ONLY | flags::MEM_COPY_HOST_PTR, 8, Some(&found_result)).unwrap();
+        let fb = core::create_buffer(&context, flags::MEM_READ_WRITE | flags::MEM_COPY_HOST_PTR, found_result.len(), Some(&found_result)).unwrap();
         let tb = core::create_buffer(&context, flags::MEM_READ_WRITE | flags::MEM_COPY_HOST_PTR, 180, Some(&target_mnemonic)).unwrap();
         let pb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, prec_data.len(), Some(&prec_data)).unwrap();
         (hb, lb, fb, tb, pb)
@@ -193,6 +216,11 @@ fn main() {
              core::enqueue_write_buffer(&queue, &hi_buf, true, 0, &hi_arr[0..actual_batch], None::<&core::Event>, None::<&mut core::Event>).unwrap();
              core::enqueue_write_buffer(&queue, &lo_buf, true, 0, &lo_arr[0..actual_batch], None::<&core::Event>, None::<&mut core::Event>).unwrap();
         }
+
+        found_result.fill(0);
+        unsafe {
+             core::enqueue_write_buffer(&queue, &found_buf, true, 0, &found_result, None::<&core::Event>, None::<&mut core::Event>).unwrap();
+        }
         
         // Arguments: 0=hi, 1=lo, 2=target, 3=found, 4=prec_table
         core::set_kernel_arg(&kernel, 0, ArgVal::mem(&hi_buf)).unwrap();
@@ -203,8 +231,9 @@ fn main() {
 
         // Run
         let global_work_size = [actual_batch, 1, 1];
+        let local_work_size = [LOCAL_WORK_SIZE, 1, 1];
         unsafe {
-            core::enqueue_kernel(&queue, &kernel, 1, None, &global_work_size, None, None::<&core::Event>, None::<&mut core::Event>).unwrap();
+            core::enqueue_kernel(&queue, &kernel, 1, None, &global_work_size, Some(local_work_size), None::<&core::Event>, None::<&mut core::Event>).unwrap();
         }
         
          // Read result
