@@ -219,6 +219,7 @@ void ripemd160_Update( RIPEMD160_CTX *ctx, uint8_t *input, uint32_t ilen )
         left = 0;
     }
 
+    #pragma unroll 1
     while( ilen >= 64 )
     {
         ripemd160_process( ctx, input );

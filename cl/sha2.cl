@@ -227,6 +227,7 @@ static void sha512(unsigned long *input, const unsigned int length, ulong *hash)
   State[6] = 0x1f83d9abfb41bd6bUL;
   State[7] = 0x5be0cd19137e2179UL;
   unsigned long a,b,c,d,e,f,g,h;
+  #pragma unroll 1
   for (int block_i = 0; block_i < nBlocks; block_i++) {
     W[0] = SWAP512(input[0]);
     W[1] = SWAP512(input[1]);
@@ -244,6 +245,7 @@ static void sha512(unsigned long *input, const unsigned int length, ulong *hash)
     W[13] = SWAP512(input[13]);
     W[14] = SWAP512(input[14]);
     W[15] = SWAP512(input[15]);
+    #pragma unroll 1
     for (int i = 16; i < 80; i++) {
       W[i] = W[i-16] + little_s0(W[i-15]) + W[i-7] + little_s1(W[i-2]);
     }
@@ -255,6 +257,7 @@ static void sha512(unsigned long *input, const unsigned int length, ulong *hash)
     f = State[5];
     g = State[6];
     h = State[7];
+    #pragma unroll 1
     for (int i = 0; i < 80; i += 16) {
       ROUND_STEP_SHA512(i)
     }
@@ -296,6 +299,7 @@ static void sha256(__private const unsigned int *pass, int pass_len, __private u
   State[5] = 0x9b05688c;
   State[6] = 0x1f83d9ab;
   State[7] = 0x5be0cd19;
+  #pragma unroll 1
   while (loops>0) {
     W[0x0]=0x0;
     W[0x1]=0x0;
