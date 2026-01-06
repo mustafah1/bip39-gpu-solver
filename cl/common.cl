@@ -3,23 +3,34 @@
 #define uint8_t uchar
 #define NULL 0
 
-static void memset(uchar *str, int c, size_t n){
+// Use void* for generic memory operations to avoid pointer type issues
+static void memset_bytes(void *str, int c, size_t n){
+  uchar *p = (uchar *)str;
   for(int i=0;i<n;i++){
-    str[i] = c;
+    p[i] = c;
   }
 }
 
-static void memcpy(uchar *dest, uchar *src, size_t n){
+static void memcpy_bytes(void *dest, const void *src, size_t n){
+  uchar *d = (uchar *)dest;
+  const uchar *s = (const uchar *)src;
   for(int i=0;i<n;i++){
-    dest[i] = src[i];
+    d[i] = s[i];
   }
 }
 
-static void memcpy_offset(uchar *dest, uchar *src, int offset, uchar bytes_to_copy){
+static void memcpy_offset_bytes(void *dest, const void *src, int offset, int bytes_to_copy){
+  uchar *d = (uchar *)dest;
+  const uchar *s = (const uchar *)src;
   for(int i=0;i<bytes_to_copy;i++){
-    dest[i] = src[offset+i];
+    d[i] = s[offset+i];
   }
 }
+
+// Legacy names for compatibility - just call the new versions
+#define memset(str, c, n) memset_bytes((void*)(str), (c), (n))
+#define memcpy(dest, src, n) memcpy_bytes((void*)(dest), (const void*)(src), (n))
+#define memcpy_offset(dest, src, offset, bytes) memcpy_offset_bytes((void*)(dest), (const void*)(src), (offset), (bytes))
 
 static void memzero(void *const pnt, const size_t len) {
   volatile unsigned char *volatile pnt_ = (volatile unsigned char *volatile)pnt;
@@ -41,12 +52,15 @@ static void memczero(void *s, size_t len, int flag) {
     }
 }
 
-void copy_pad_previous(uchar *pad, uchar *previous, uchar *joined) {
+void copy_pad_previous(void *pad, void *previous, void *joined) {
+  uchar *p = (uchar *)pad;
+  uchar *prev = (uchar *)previous;
+  uchar *j = (uchar *)joined;
   for(int x=0;x<128;x++){
-    joined[x] = pad[x];
+    j[x] = p[x];
   }
   for(int x=0;x<64;x++){
-    joined[x+128] = previous[x];
+    j[x+128] = prev[x];
   }
 }
 
@@ -57,9 +71,11 @@ void print_byte_array_hex(uchar *arr, int len) {
   printf("\n\n");
 }
 
-void xor_seed_with_round(char *seed, char *round) {
+void xor_seed_with_round(void *seed, void *round) {
+  uchar *s = (uchar *)seed;
+  uchar *r = (uchar *)round;
   for(int x=0;x<64;x++){
-    seed[x] = seed[x] ^ round[x];
+    s[x] = s[x] ^ r[x];
   }
 }
 

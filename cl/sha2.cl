@@ -371,3 +371,27 @@ static void sha256(__private const unsigned int *pass, int pass_len, __private u
 #undef mod
 #undef shr32
 #undef rotl32
+
+// Byte-array wrapper for sha256 - accepts uchar pointers
+static void sha256_bytes(const uchar *input, int input_len, uchar *output) {
+  // Copy input to properly aligned uint buffer
+  unsigned int pass_buf[64] = {0};
+  for(int i = 0; i < input_len && i < 256; i++) {
+    ((uchar*)pass_buf)[i] = input[i];
+  }
+  
+  unsigned int hash_buf[8] = {0};
+  sha256(pass_buf, input_len, hash_buf);
+  
+  // Copy result back to uchar output
+  for(int i = 0; i < 32; i++) {
+    output[i] = ((uchar*)hash_buf)[i];
+  }
+}
+
+// Byte-array wrapper for sha512 - accepts uchar pointers
+static void sha512_bytes(uchar *input, int input_len, uchar *output) {
+  // The input needs to be cast to ulong* for sha512
+  // We pass the raw pointer and let sha512 handle it
+  sha512((unsigned long*)input, input_len, (ulong*)output);
+}
