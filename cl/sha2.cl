@@ -213,6 +213,7 @@ static void sha256_process2 (const unsigned int *W, unsigned int *digest) {
   digest[7] += h;
 }
 
+__attribute__((noinline))
 static void sha512(unsigned long *input, const unsigned int length, ulong *hash) {
   const unsigned int nBlocks = md_pad_128(input, (const unsigned long) length);
   unsigned long W[0x50]={0};
@@ -278,6 +279,7 @@ static void sha512(unsigned long *input, const unsigned int length, ulong *hash)
   return;
 }
 
+__attribute__((noinline))
 static void sha256(__private const unsigned int *pass, int pass_len, __private unsigned int* hash) {
   int plen=pass_len/4;
   if (mod(pass_len,4)) plen++; 
