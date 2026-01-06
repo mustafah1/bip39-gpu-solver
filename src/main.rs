@@ -9,7 +9,9 @@ use std::io::{Write, stderr};
 // Our 12 words - BIP39 indices
 const WORDS: [u16; 12] = [112, 146, 238, 608, 759, 905, 1251, 1348, 1437, 1559, 1597, 1841];
 const TOTAL_PERMS: u64 = 479_001_600;
-const BATCH_SIZE: usize = 64; // Reduced to avoid CL_OUT_OF_RESOURCES with no-opt
+const BATCH_SIZE: usize = 1; // Testing absolute minimum to diagnose CL_OUT_OF_RESOURCES
+
+
 
 const WORD_STRINGS: [&str; 12] = [
     "asset", "basket", "capital", "execute", "gauge", "improve",
@@ -99,7 +101,7 @@ fn main() {
     let program = core::create_program_with_source(&context, &[src]).unwrap();
     
     dbg_print!("[DBG] Building program...");
-    if let Err(e) = core::build_program(&program, Some(&[device_id]), &CString::new("-cl-mad-enable").unwrap(), None, None) {
+    if let Err(e) = core::build_program(&program, Some(&[device_id]), &CString::new("-cl-opt-disable").unwrap(), None, None) {
         eprintln!("Kernel build error: {:?}", e);
         return;
     }
