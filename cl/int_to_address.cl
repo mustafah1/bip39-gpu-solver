@@ -1,10 +1,12 @@
 
 
-__kernel void int_to_address(ulong mnemonic_start_hi,ulong mnemonic_start_lo, __global uchar * target_mnemonic, __global uchar * found_mnemonic) {
+// Batch kernel - accepts arrays of pre-computed mnemonic encodings
+__kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mnemonic_lo_arr, 
+                             __global uchar * target_mnemonic, __global uchar * found_idx) {
   ulong idx = get_global_id(0);
-
-  ulong mnemonic_lo = mnemonic_start_lo + idx;
-  ulong mnemonic_hi = mnemonic_start_hi;
+  
+  ulong mnemonic_hi = mnemonic_hi_arr[idx];
+  ulong mnemonic_lo = mnemonic_lo_arr[idx];
 
   uchar bytes[16];
   bytes[15] = mnemonic_lo & 0xFF;
@@ -127,7 +129,12 @@ __kernel void int_to_address(ulong mnemonic_start_hi,ulong mnemonic_start_lo, __
   }
 
   if(found_target == 1) {
-    found_mnemonic[0] = 0x01;
+    found_idx[0] = 0x01;
+    // Store the index that was found
+    found_idx[1] = (idx >> 24) & 0xFF;
+    found_idx[2] = (idx >> 16) & 0xFF;
+    found_idx[3] = (idx >> 8) & 0xFF;
+    found_idx[4] = idx & 0xFF;
     for(int i=0;i<mnemonic_index;i++) {
       target_mnemonic[i] = mnemonic[i];
     }
