@@ -114,8 +114,8 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
   hardened_private_child_from_private(&master_private, &target_key, 49);
   hardened_private_child_from_private(&target_key, &target_key, 0);
   hardened_private_child_from_private(&target_key, &target_key, 0);
-  normal_private_child_from_private(&target_key, &target_key, 0);
-  normal_private_child_from_private(&target_key, &target_key, 0);
+  normal_private_child_from_private(&target_key, &target_key, 0, prec_table);
+  normal_private_child_from_private(&target_key, &target_key, 0, prec_table);
   public_from_private(&target_key, &target_public_key, prec_table);
 
   uchar raw_address[25] = {0};
