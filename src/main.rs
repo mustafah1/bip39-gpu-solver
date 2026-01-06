@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use ocl::{core, flags};
 use ocl::enums::ArgVal;
 use ocl::builders::ContextProperties;
+use ocl::core::Error as OclCoreError;
 // use std::time::Instant; // Unused
 use std::io::{Write}; // stderr unused
 
@@ -55,6 +56,10 @@ fn encode_mnemonic(perm_indices: &[usize; 12]) -> (u64, u64) {
 
 fn perm_to_words(perm: &[usize; 12]) -> String {
     perm.iter().map(|&i| WORD_STRINGS[i]).collect::<Vec<_>>().join(" ")
+}
+
+fn is_out_of_resources(err: &OclCoreError) -> bool {
+    format!("{:?}", err).contains("CL_OUT_OF_RESOURCES")
 }
 
 fn load_kernel_source() -> String {
@@ -195,12 +200,13 @@ fn main() {
     println!("🚀 Starting GPU search...");
 
     let mut k: u64 = 0;
+    let mut max_batch = BATCH_SIZE;
     
     while k < TOTAL_PERMS {
-        let actual_batch = if k + (BATCH_SIZE as u64) > TOTAL_PERMS {
+        let actual_batch = if k + (max_batch as u64) > TOTAL_PERMS {
             (TOTAL_PERMS - k) as usize
         } else {
-            BATCH_SIZE
+            max_batch
         };
 
         // Prepare batch
@@ -232,13 +238,29 @@ fn main() {
         // Run
         let global_work_size = [actual_batch, 1, 1];
         let local_work_size = [LOCAL_WORK_SIZE, 1, 1];
-        unsafe {
-            core::enqueue_kernel(&queue, &kernel, 1, None, &global_work_size, Some(local_work_size), None::<&core::Event>, None::<&mut core::Event>).unwrap();
+        let enqueue_res = unsafe {
+            core::enqueue_kernel(&queue, &kernel, 1, None, &global_work_size, Some(local_work_size), None::<&core::Event>, None::<&mut core::Event>)
+        };
+        if let Err(e) = enqueue_res {
+            if is_out_of_resources(&e) && max_batch > 1 {
+                max_batch = (max_batch / 2).max(1);
+                eprintln!("[DBG] CL_OUT_OF_RESOURCES on enqueue; reducing batch to {}", max_batch);
+                continue;
+            }
+            panic!("Kernel enqueue error: {:?}", e);
         }
         
          // Read result
-        unsafe {
-            core::enqueue_read_buffer(&queue, &found_buf, true, 0, &mut found_result, None::<&core::Event>, None::<&mut core::Event>).unwrap();
+        let read_res = unsafe {
+            core::enqueue_read_buffer(&queue, &found_buf, true, 0, &mut found_result, None::<&core::Event>, None::<&mut core::Event>)
+        };
+        if let Err(e) = read_res {
+            if is_out_of_resources(&e) && max_batch > 1 {
+                max_batch = (max_batch / 2).max(1);
+                eprintln!("[DBG] CL_OUT_OF_RESOURCES on read; reducing batch to {}", max_batch);
+                continue;
+            }
+            panic!("Read buffer error: {:?}", e);
         }
 
         if found_result[0] == 1 {
