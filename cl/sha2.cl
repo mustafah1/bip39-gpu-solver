@@ -165,7 +165,12 @@ __constant unsigned long k_sha512[80] =
 #define ROUND_STEP_SHA512(i) { SHA512_STEP(a, b, c, d, e, f, g, h, W[i + 0], k_sha512[i +  0]); SHA512_STEP(h, a, b, c, d, e, f, g, W[i + 1], k_sha512[i +  1]); SHA512_STEP(g, h, a, b, c, d, e, f, W[i + 2], k_sha512[i +  2]); SHA512_STEP(f, g, h, a, b, c, d, e, W[i + 3], k_sha512[i +  3]); SHA512_STEP(e, f, g, h, a, b, c, d, W[i + 4], k_sha512[i +  4]); SHA512_STEP(d, e, f, g, h, a, b, c, W[i + 5], k_sha512[i +  5]); SHA512_STEP(c, d, e, f, g, h, a, b, W[i + 6], k_sha512[i +  6]); SHA512_STEP(b, c, d, e, f, g, h, a, W[i + 7], k_sha512[i +  7]); SHA512_STEP(a, b, c, d, e, f, g, h, W[i + 8], k_sha512[i +  8]); SHA512_STEP(h, a, b, c, d, e, f, g, W[i + 9], k_sha512[i +  9]); SHA512_STEP(g, h, a, b, c, d, e, f, W[i + 10], k_sha512[i + 10]); SHA512_STEP(f, g, h, a, b, c, d, e, W[i + 11], k_sha512[i + 11]); SHA512_STEP(e, f, g, h, a, b, c, d, W[i + 12], k_sha512[i + 12]); SHA512_STEP(d, e, f, g, h, a, b, c, W[i + 13], k_sha512[i + 13]); SHA512_STEP(c, d, e, f, g, h, a, b, W[i + 14], k_sha512[i + 14]); SHA512_STEP(b, c, d, e, f, g, h, a, W[i + 15], k_sha512[i + 15]); }
 #define SHA256_EXPAND(x,y,z,w) (S1 (x) + y + S0 (z) + w) 
 
-static void sha256_process2 (const unsigned int *W, unsigned int *digest) {
+  unsigned int W[64];
+  for(int i=0; i<16; i++) W[i] = pW[i];
+  for(int i=16; i<64; i++) {
+    W[i] = S1(W[i-2]) + W[i-7] + S0(W[i-15]) + W[i-16];
+  }
+
   unsigned int a = digest[0];
   unsigned int b = digest[1];
   unsigned int c = digest[2];
@@ -175,33 +180,19 @@ static void sha256_process2 (const unsigned int *W, unsigned int *digest) {
   unsigned int g = digest[6];
   unsigned int h = digest[7];
 
-  unsigned int w0_t = W[0];
-  unsigned int w1_t = W[1];
-  unsigned int w2_t = W[2];
-  unsigned int w3_t = W[3];
-  unsigned int w4_t = W[4];
-  unsigned int w5_t = W[5];
-  unsigned int w6_t = W[6];
-  unsigned int w7_t = W[7];
-  unsigned int w8_t = W[8];
-  unsigned int w9_t = W[9];
-  unsigned int wa_t = W[10];
-  unsigned int wb_t = W[11];
-  unsigned int wc_t = W[12];
-  unsigned int wd_t = W[13];
-  unsigned int we_t = W[14];
-  unsigned int wf_t = W[15];
-
-  #define ROUND_EXPAND(i) { w0_t = SHA256_EXPAND (we_t, w9_t, w1_t, w0_t); w1_t = SHA256_EXPAND (wf_t, wa_t, w2_t, w1_t); w2_t = SHA256_EXPAND (w0_t, wb_t, w3_t, w2_t); w3_t = SHA256_EXPAND (w1_t, wc_t, w4_t, w3_t); w4_t = SHA256_EXPAND (w2_t, wd_t, w5_t, w4_t); w5_t = SHA256_EXPAND (w3_t, we_t, w6_t, w5_t); w6_t = SHA256_EXPAND (w4_t, wf_t, w7_t, w6_t); w7_t = SHA256_EXPAND (w5_t, w0_t, w8_t, w7_t); w8_t = SHA256_EXPAND (w6_t, w1_t, w9_t, w8_t); w9_t = SHA256_EXPAND (w7_t, w2_t, wa_t, w9_t); wa_t = SHA256_EXPAND (w8_t, w3_t, wb_t, wa_t); wb_t = SHA256_EXPAND (w9_t, w4_t, wc_t, wb_t); wc_t = SHA256_EXPAND (wa_t, w5_t, wd_t, wc_t); wd_t = SHA256_EXPAND (wb_t, w6_t, we_t, wd_t); we_t = SHA256_EXPAND (wc_t, w7_t, wf_t, we_t); wf_t = SHA256_EXPAND (wd_t, w8_t, w0_t, wf_t); }
-  #define ROUND_STEP(i) { SHA256_STEP (F0, F1, a, b, c, d, e, f, g, h, w0_t, k_sha256[i +  0]); SHA256_STEP (F0, F1, h, a, b, c, d, e, f, g, w1_t, k_sha256[i +  1]); SHA256_STEP (F0, F1, g, h, a, b, c, d, e, f, w2_t, k_sha256[i +  2]); SHA256_STEP (F0, F1, f, g, h, a, b, c, d, e, w3_t, k_sha256[i +  3]); SHA256_STEP (F0, F1, e, f, g, h, a, b, c, d, w4_t, k_sha256[i +  4]); SHA256_STEP (F0, F1, d, e, f, g, h, a, b, c, w5_t, k_sha256[i +  5]); SHA256_STEP (F0, F1, c, d, e, f, g, h, a, b, w6_t, k_sha256[i +  6]); SHA256_STEP (F0, F1, b, c, d, e, f, g, h, a, w7_t, k_sha256[i +  7]); SHA256_STEP (F0, F1, a, b, c, d, e, f, g, h, w8_t, k_sha256[i +  8]); SHA256_STEP (F0, F1, h, a, b, c, d, e, f, g, w9_t, k_sha256[i +  9]); SHA256_STEP (F0, F1, g, h, a, b, c, d, e, f, wa_t, k_sha256[i + 10]); SHA256_STEP (F0, F1, f, g, h, a, b, c, d, e, wb_t, k_sha256[i + 11]); SHA256_STEP (F0, F1, e, f, g, h, a, b, c, d, wc_t, k_sha256[i + 12]); SHA256_STEP (F0, F1, d, e, f, g, h, a, b, c, wd_t, k_sha256[i + 13]); SHA256_STEP (F0, F1, c, d, e, f, g, h, a, b, we_t, k_sha256[i + 14]); SHA256_STEP (F0, F1, b, c, d, e, f, g, h, a, wf_t, k_sha256[i + 15]); }
-
-  ROUND_STEP (0);
-  ROUND_EXPAND();
-  ROUND_STEP(16);
-  ROUND_EXPAND();
-  ROUND_STEP(32);
-  ROUND_EXPAND();
-  ROUND_STEP(48);
+  #pragma unroll 1
+  for(int i=0; i<64; i++) {
+     unsigned int T1 = h + S3(e) + F1(e, f, g) + k_sha256[i] + W[i];
+     unsigned int T2 = S2(a) + F0(a, b, c);
+     h = g;
+     g = f;
+     f = e;
+     e = d + T1;
+     d = c;
+     c = b;
+     b = a;
+     a = T1 + T2;
+  }
 
   digest[0] += a;
   digest[1] += b;
@@ -257,9 +248,19 @@ static void sha512(unsigned long *input, const unsigned int length, ulong *hash)
     f = State[5];
     g = State[6];
     h = State[7];
+
     #pragma unroll 1
-    for (int i = 0; i < 80; i += 16) {
-      ROUND_STEP_SHA512(i)
+    for (int i = 0; i < 80; i++) {
+        unsigned long T1 = h + SHA512_S1(e) + F1(e, f, g) + k_sha512[i] + W[i];
+        unsigned long T2 = SHA512_S0(a) + F0(a, b, c);
+        h = g;
+        g = f;
+        f = e;
+        e = d + T1;
+        d = c;
+        c = b;
+        b = a;
+        a = T1 + T2;
     }
     State[0] += a;
     State[1] += b;
