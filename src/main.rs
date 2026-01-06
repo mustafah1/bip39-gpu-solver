@@ -73,7 +73,6 @@ fn main() {
     println!("║         pair price require sell share trend                ║");
     println!("║ Total:  479,001,600 permutations                           ║");
     println!("║ Batch:  {} GPU work items/call                           ║", BATCH_SIZE);
-    println!("║ ⚠️ WARNING: PBKDF2 LOOP DISABLED FOR DEBUGGING ⚠️          ║");
     println!("╚════════════════════════════════════════════════════════════╝");
     
     dbg_print!("[DBG] Getting platform...");
@@ -100,7 +99,7 @@ fn main() {
     let program = core::create_program_with_source(&context, &[src]).unwrap();
     
     dbg_print!("[DBG] Building program...");
-    if let Err(e) = core::build_program(&program, Some(&[device_id]), &CString::new("").unwrap(), None, None) {
+    if let Err(e) = core::build_program(&program, Some(&[device_id]), &CString::new("-cl-opt-disable").unwrap(), None, None) {
         eprintln!("Kernel build error: {:?}", e);
         return;
     }
