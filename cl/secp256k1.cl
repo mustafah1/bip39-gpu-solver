@@ -10,8 +10,10 @@ static void secp256k1_ecmult_gen(secp256k1_gej *r,  secp256k1_scalar *gn, __glob
     secp256k1_gej_set_infinity(r);
 
     add.infinity = 0;
+    #pragma unroll 1
     for (j = 0; j < ECMULT_GEN_PREC_N; j++) {
         bits = secp256k1_scalar_get_bits(gn, j * ECMULT_GEN_PREC_B, ECMULT_GEN_PREC_B);
+        #pragma unroll 1
         for (i = 0; i < ECMULT_GEN_PREC_G; i++) {
             uint32_t mask0, mask1;
             mask0 = (i == bits) + ~((uint32_t)0);
