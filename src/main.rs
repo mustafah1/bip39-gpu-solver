@@ -159,8 +159,8 @@ fn main() {
         }
     });
 
-    // We re-enable optimizations (-cl-mad-enable) because the kernel is now small enough!
-    if let Err(e) = core::build_program(&program, Some(&[device_id]), &CString::new("-cl-opt-disable").unwrap(), None, None) {
+    // Enable math optimizations to reduce register pressure and avoid resource exhaustion.
+    if let Err(e) = core::build_program(&program, Some(&[device_id]), &CString::new("-cl-mad-enable").unwrap(), None, None) {
         build_done.store(true, Ordering::Relaxed);
         let _ = heartbeat.join();
         eprintln!("Kernel build error: {:?}", e);
