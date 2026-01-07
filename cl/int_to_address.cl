@@ -1,10 +1,11 @@
 
 
-// Batch kernel - accepts arrays of pre-computed mnemonic encodings
+// Batch kernel - generates permutations on GPU
 __constant uchar TARGET_ADDRESS[25] = {0x05, 0x74, 0xa3, 0x98, 0xff, 0x7b, 0xd2, 0x28, 0x70, 0x8c, 0x73, 0xde, 0xd2, 0x8a, 0xa5, 0xb2, 0x22, 0x61, 0xb0, 0x86, 0x43, 0x8e, 0xe5, 0x6e, 0xd2};
+__constant ushort PERM_WORDS[12] = {112, 146, 238, 608, 759, 905, 1251, 1348, 1437, 1559, 1597, 1841};
+__constant ulong FACTORIALS[13] = {1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880, 3628800, 39916800, 479001600};
 
-__kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mnemonic_lo_arr, 
-                             __global const uchar *checksum_bits,
+__kernel void int_to_address(ulong start_k,
                              __global uchar * target_mnemonic, __global uchar * found_idx,
                              __global const secp256k1_ge_storage* prec_table,
                              uint batch_len) {
@@ -12,9 +13,32 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
   if (idx >= batch_len) {
     return;
   }
-  
-  ulong mnemonic_hi = mnemonic_hi_arr[idx];
-  ulong mnemonic_lo = mnemonic_lo_arr[idx];
+
+  ulong k = start_k + idx;
+  ushort remaining[12];
+  ushort indices[12];
+  for (int i = 0; i < 12; i++) {
+    remaining[i] = PERM_WORDS[i];
+  }
+  for (int i = 12; i >= 1; i--) {
+    ulong f = FACTORIALS[i - 1];
+    ulong j = k / f;
+    k = k % f;
+    indices[12 - i] = remaining[j];
+    for (ulong m = j; m < (ulong)(i - 1); m++) {
+      remaining[m] = remaining[m + 1];
+    }
+  }
+
+  ulong mnemonic_hi = 0;
+  ulong mnemonic_lo = 0;
+  for (int i = 0; i < 12; i++) {
+    ulong w = (ulong)indices[i] & 2047;
+    mnemonic_hi = (mnemonic_hi << 11) | (mnemonic_lo >> 53);
+    mnemonic_lo = (mnemonic_lo << 11) | w;
+  }
+  mnemonic_hi = (mnemonic_hi << 4) | (mnemonic_lo >> 60);
+  mnemonic_lo = (mnemonic_lo << 4);
 
   uchar bytes[16];
   bytes[15] = mnemonic_lo & 0xFF;
@@ -38,23 +62,9 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
   uchar mnemonic_hash[32];
   sha256_bytes(bytes, 16, mnemonic_hash);
   uchar checksum = (mnemonic_hash[0] >> 4) & 0x0F;
-  if ((checksum_bits[idx] & 0x0F) != checksum) {
+  if (((uchar)indices[11] & 0x0F) != checksum) {
     return;
   }
-  
-  ushort indices[12];
-  indices[0] = (mnemonic_hi >> 53) & 2047;
-  indices[1] = (mnemonic_hi >> 42) & 2047;
-  indices[2] = (mnemonic_hi >> 31) & 2047;
-  indices[3] = (mnemonic_hi >> 20) & 2047;
-  indices[4] = (mnemonic_hi >> 9)  & 2047;
-  indices[5] = ((mnemonic_hi & ((1 << 9)-1)) << 2) | ((mnemonic_lo >> 62) & 3);
-  indices[6] = (mnemonic_lo >> 51) & 2047;
-  indices[7] = (mnemonic_lo >> 40) & 2047;
-  indices[8] = (mnemonic_lo >> 29) & 2047;
-  indices[9] = (mnemonic_lo >> 18) & 2047;
-  indices[10] = (mnemonic_lo >> 7) & 2047;
-  indices[11] = ((mnemonic_lo & ((1 << 7)-1)) << 4) | checksum;
 
   uchar ipad_key[128];
   uchar opad_key[128];

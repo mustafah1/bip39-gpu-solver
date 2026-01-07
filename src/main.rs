@@ -10,11 +10,10 @@ use ocl::core::Error as OclCoreError;
 // use std::time::Instant; // Unused
 use std::io::{Write}; // stderr unused
 
-// Our 12 words - BIP39 indices
-const WORDS: [u16; 12] = [112, 146, 238, 608, 759, 905, 1251, 1348, 1437, 1559, 1597, 1841];
+// Our 12 words - BIP39 strings
 const TOTAL_PERMS: u64 = 479_001_600;
 const INITIAL_BATCH: usize = 64;
-const BATCH_CAP: usize = 1024;
+const BATCH_CAP: usize = 4096;
 const LOCAL_WORK_SIZES: [usize; 8] = [128, 64, 32, 16, 8, 4, 2, 1];
 const BUILD_HEARTBEAT_SECS: u64 = 10;
 const THROUGHPUT_REPORT_SECS: u64 = 5;
@@ -46,15 +45,6 @@ fn permutation_to_indices(mut k: u64) -> [usize; 12] {
         result[12 - i] = indices.remove(j);
     }
     result
-}
-
-fn encode_mnemonic(perm_indices: &[usize; 12]) -> (u64, u64) {
-    let mut bits: u128 = 0;
-    for i in 0..12 {
-        bits = (bits << 11) | (WORDS[perm_indices[i]] as u128);
-    }
-    bits <<= 4;
-    ((bits >> 64) as u64, bits as u64)
 }
 
 fn perm_to_words(perm: &[usize; 12]) -> String {
@@ -183,21 +173,15 @@ fn main() {
     
     // Buffers
     dbg_print!("[DBG] Allocating host arrays...");
-    let mut hi_arr = vec![0u64; BATCH_CAP];
-    let mut lo_arr = vec![0u64; BATCH_CAP];
-    let mut checksum_arr = vec![0u8; BATCH_CAP];
     let target_mnemonic = vec![0u8; 180];
     let mut found_result = vec![0u8; 8];
     
     dbg_print!("[DBG] Creating GPU buffers...");
-    let (hi_buf, lo_buf, checksum_buf, found_buf, target_buf, prec_buf) = unsafe {
-        let hb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, BATCH_CAP, Some(&hi_arr)).unwrap();
-        let lb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, BATCH_CAP, Some(&lo_arr)).unwrap();
-        let cb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, BATCH_CAP, Some(&checksum_arr)).unwrap();
+    let (found_buf, target_buf, prec_buf) = unsafe {
         let fb = core::create_buffer(&context, flags::MEM_READ_WRITE | flags::MEM_COPY_HOST_PTR, found_result.len(), Some(&found_result)).unwrap();
         let tb = core::create_buffer(&context, flags::MEM_READ_WRITE | flags::MEM_COPY_HOST_PTR, 180, Some(&target_mnemonic)).unwrap();
         let pb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, prec_data.len(), Some(&prec_data)).unwrap();
-        (hb, lb, cb, fb, tb, pb)
+        (fb, tb, pb)
     };
 
     dbg_print!("[DBG] All setup complete!");
@@ -212,12 +196,9 @@ fn main() {
     let mut success_iters: u32 = 0;
 
     // Kernel args that don't change each iteration
-    core::set_kernel_arg(&kernel, 0, ArgVal::mem(&hi_buf)).unwrap();
-    core::set_kernel_arg(&kernel, 1, ArgVal::mem(&lo_buf)).unwrap();
-    core::set_kernel_arg(&kernel, 2, ArgVal::mem(&checksum_buf)).unwrap();
-    core::set_kernel_arg(&kernel, 3, ArgVal::mem(&target_buf)).unwrap();
-    core::set_kernel_arg(&kernel, 4, ArgVal::mem(&found_buf)).unwrap();
-    core::set_kernel_arg(&kernel, 5, ArgVal::mem(&prec_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 1, ArgVal::mem(&target_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 2, ArgVal::mem(&found_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 3, ArgVal::mem(&prec_buf)).unwrap();
     
     while k < TOTAL_PERMS {
         if local_work_size > max_batch {
@@ -228,70 +209,6 @@ fn main() {
         } else {
             max_batch
         };
-
-        // Prepare batch
-        for i in 0..actual_batch {
-             let indices = permutation_to_indices(k + (i as u64));
-            let (hi, lo) = encode_mnemonic(&indices);
-            hi_arr[i] = hi;
-            lo_arr[i] = lo;
-            checksum_arr[i] = (WORDS[indices[11]] & 0x0F) as u8;
-        }
-
-        // Write inputs - use slices for actual batch size
-        let write_hi = unsafe {
-             core::enqueue_write_buffer(&queue, &hi_buf, true, 0, &hi_arr[0..actual_batch], None::<&core::Event>, None::<&mut core::Event>)
-        };
-        if let Err(e) = write_hi {
-            if is_out_of_resources(&e) {
-                if max_batch > 1 {
-                    max_batch = (max_batch / 2).max(1);
-                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write hi; reducing batch to {}", max_batch);
-                } else {
-                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write hi at batch 1; retrying with fresh queue");
-                }
-                queue = core::create_command_queue(&context, &device_id, None).unwrap();
-                success_iters = 0;
-                continue;
-            }
-            panic!("Write buffer (hi) error: {:?}", e);
-        }
-
-        let write_lo = unsafe {
-             core::enqueue_write_buffer(&queue, &lo_buf, true, 0, &lo_arr[0..actual_batch], None::<&core::Event>, None::<&mut core::Event>)
-        };
-        if let Err(e) = write_lo {
-            if is_out_of_resources(&e) {
-                if max_batch > 1 {
-                    max_batch = (max_batch / 2).max(1);
-                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write lo; reducing batch to {}", max_batch);
-                } else {
-                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write lo at batch 1; retrying with fresh queue");
-                }
-                queue = core::create_command_queue(&context, &device_id, None).unwrap();
-                success_iters = 0;
-                continue;
-            }
-            panic!("Write buffer (lo) error: {:?}", e);
-        }
-
-        let write_checksum = unsafe {
-             core::enqueue_write_buffer(&queue, &checksum_buf, true, 0, &checksum_arr[0..actual_batch], None::<&core::Event>, None::<&mut core::Event>)
-        };
-        if let Err(e) = write_checksum {
-            if is_out_of_resources(&e) {
-                if max_batch > 1 {
-                    max_batch = (max_batch / 2).max(1);
-                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write checksum; reducing batch to {}", max_batch);
-                } else {
-                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write checksum at batch 1; retrying with fresh queue");
-                }
-                queue = core::create_command_queue(&context, &device_id, None).unwrap();
-                success_iters = 0;
-                continue;
-            }
-            panic!("Write buffer (checksum) error: {:?}", e);
-        }
 
         found_result.fill(0);
         let write_found = unsafe {
@@ -312,8 +229,9 @@ fn main() {
             panic!("Write buffer (found) error: {:?}", e);
         }
         
-        // Arguments: 0=hi, 1=lo, 2=checksum, 3=target, 4=found, 5=prec_table, 6=batch_len
-        core::set_kernel_arg(&kernel, 6, ArgVal::scalar(&(actual_batch as u32))).unwrap();
+        // Arguments: 0=start_k, 1=target, 2=found, 3=prec_table, 4=batch_len
+        core::set_kernel_arg(&kernel, 0, ArgVal::scalar(&k)).unwrap();
+        core::set_kernel_arg(&kernel, 4, ArgVal::scalar(&(actual_batch as u32))).unwrap();
 
         // Run
         let padded_batch = ((actual_batch + local_work_size - 1) / local_work_size) * local_work_size;
