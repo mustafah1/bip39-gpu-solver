@@ -14,7 +14,7 @@ use std::io::{Write}; // stderr unused
 
 // Our 12 words - BIP39 strings
 const TOTAL_PERMS: u64 = 479_001_600;
-const INITIAL_BATCH: usize = 64;
+const INITIAL_BATCH: usize = 4096;
 const BATCH_CAP: usize = 16384;
 const LOCAL_WORK_SIZES: [usize; 9] = [256, 128, 64, 32, 16, 8, 4, 2, 1];
 const BUILD_HEARTBEAT_SECS: u64 = 10;
