@@ -7,6 +7,8 @@ __constant ulong FACTORIALS[13] = {1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880
 
 __kernel void int_to_address(ulong start_k,
                              uint stride,
+                             uint change,
+                             uint addr_index,
                              __global uchar * target_mnemonic, __global uchar * found_idx,
                              __global const secp256k1_ge_storage* prec_table,
                              uint batch_len) {
@@ -132,8 +134,8 @@ __kernel void int_to_address(ulong start_k,
   hardened_private_child_from_private(&master_private, &target_key, 49);
   hardened_private_child_from_private(&target_key, &target_key, 0);
   hardened_private_child_from_private(&target_key, &target_key, 0);
-  normal_private_child_from_private(&target_key, &target_key, 0, prec_table);
-  normal_private_child_from_private(&target_key, &target_key, 0, prec_table);
+  normal_private_child_from_private(&target_key, &target_key, change, prec_table);
+  normal_private_child_from_private(&target_key, &target_key, addr_index, prec_table);
   public_from_private(&target_key, &target_public_key, prec_table);
 
   uchar raw_address[25] = {0};

@@ -103,6 +103,23 @@ fn parse_device_index() -> usize {
     0
 }
 
+fn parse_path_args() -> (u32, u32) {
+    let mut change: u32 = 0;
+    let mut addr_index: u32 = 0;
+    for arg in env::args().skip(1) {
+        if let Some(val) = arg.strip_prefix("--change=") {
+            if let Ok(v) = val.parse::<u32>() {
+                change = v;
+            }
+        } else if let Some(val) = arg.strip_prefix("--addr-index=") {
+            if let Ok(v) = val.parse::<u32>() {
+                addr_index = v;
+            }
+        }
+    }
+    (change, addr_index)
+}
+
 fn parse_range_args() -> (u64, u64) {
     let mut start: u64 = 0;
     let mut end: u64 = TOTAL_PERMS;
@@ -211,6 +228,10 @@ fn main() {
     if shard_count > 1 {
         eprintln!("[DBG] Sharding enabled: {}/{}", shard_index, shard_count);
     }
+    let (change, addr_index) = parse_path_args();
+    if change != 0 || addr_index != 0 {
+        eprintln!("[DBG] Path override: /{}/{}", change, addr_index);
+    }
     let (range_start, range_end) = parse_range_args();
     if range_start != 0 || range_end != TOTAL_PERMS {
         eprintln!("[DBG] Range enabled: {} -> {}", range_start, range_end);
@@ -316,9 +337,11 @@ fn main() {
     let mut read_counter: u32 = 0;
 
     // Kernel args that don't change each iteration
-    core::set_kernel_arg(&kernel, 2, ArgVal::mem(&target_buf)).unwrap();
-    core::set_kernel_arg(&kernel, 3, ArgVal::mem(&found_buf)).unwrap();
-    core::set_kernel_arg(&kernel, 4, ArgVal::mem(&prec_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 2, ArgVal::scalar(&change)).unwrap();
+    core::set_kernel_arg(&kernel, 3, ArgVal::scalar(&addr_index)).unwrap();
+    core::set_kernel_arg(&kernel, 4, ArgVal::mem(&target_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 5, ArgVal::mem(&found_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 6, ArgVal::mem(&prec_buf)).unwrap();
     
     while k < range_end {
         if local_work_size > max_batch {
@@ -358,11 +381,11 @@ fn main() {
             }
         }
         
-        // Arguments: 0=start_k, 1=stride, 2=target, 3=found, 4=prec_table, 5=batch_len
+        // Arguments: 0=start_k, 1=stride, 2=change, 3=addr_index, 4=target, 5=found, 6=prec_table, 7=batch_len
         let stride = shard_count;
         core::set_kernel_arg(&kernel, 0, ArgVal::scalar(&k)).unwrap();
         core::set_kernel_arg(&kernel, 1, ArgVal::scalar(&stride)).unwrap();
-        core::set_kernel_arg(&kernel, 5, ArgVal::scalar(&(actual_batch as u32))).unwrap();
+        core::set_kernel_arg(&kernel, 7, ArgVal::scalar(&(actual_batch as u32))).unwrap();
 
         // Run
         let padded_batch = ((actual_batch + local_work_size - 1) / local_work_size) * local_work_size;
