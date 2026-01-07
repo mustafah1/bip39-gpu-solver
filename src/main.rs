@@ -139,12 +139,12 @@ fn start_gpu_stats_thread(interval_secs: u64, stop: Arc<AtomicBool>) {
                     if let Ok(text) = String::from_utf8(out.stdout) {
                         let line = text.trim();
                         if !line.is_empty() {
-                            eprintln!("[GPU] util {}, mem util {}, {} MiB / {} MiB", 
-                                line.split(',').nth(0).unwrap_or("?").trim(),
-                                line.split(',').nth(1).unwrap_or("?").trim(),
-                                line.split(',').nth(2).unwrap_or("?").trim(),
-                                line.split(',').nth(3).unwrap_or("?").trim(),
-                            );
+                            let mut parts = line.split(',').map(|s| s.trim());
+                            let util = parts.next().unwrap_or("?").trim_end_matches('%');
+                            let mem_util = parts.next().unwrap_or("?").trim_end_matches('%');
+                            let used = parts.next().unwrap_or("?");
+                            let total = parts.next().unwrap_or("?");
+                            eprintln!("[GPU] util {}% | mem util {}% | {} MiB / {} MiB", util, mem_util, used, total);
                         }
                     }
                 }
@@ -311,7 +311,7 @@ fn main() {
     let mut max_batch = INITIAL_BATCH.min(BATCH_CAP);
     let mut local_work_size = LOCAL_WORK_SIZES.iter().copied().find(|&s| s <= max_batch).unwrap_or(1);
     let mut last_report = Instant::now();
-    let mut last_k: u64 = 0;
+    let mut last_k: u64 = k;
     let mut success_iters: u32 = 0;
     let mut read_counter: u32 = 0;
 
