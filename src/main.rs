@@ -17,6 +17,8 @@ const INITIAL_BATCH: usize = 64;
 const BATCH_CAP: usize = 1024;
 const LOCAL_WORK_SIZES: [usize; 8] = [128, 64, 32, 16, 8, 4, 2, 1];
 const BUILD_HEARTBEAT_SECS: u64 = 10;
+const THROUGHPUT_REPORT_SECS: u64 = 5;
+const BATCH_GROW_ITERS: u32 = 100;
 
 const WORD_STRINGS: [&str; 12] = [
     "asset", "basket", "capital", "execute", "gauge", "improve",
@@ -183,17 +185,19 @@ fn main() {
     dbg_print!("[DBG] Allocating host arrays...");
     let mut hi_arr = vec![0u64; BATCH_CAP];
     let mut lo_arr = vec![0u64; BATCH_CAP];
+    let mut checksum_arr = vec![0u8; BATCH_CAP];
     let target_mnemonic = vec![0u8; 180];
     let mut found_result = vec![0u8; 8];
     
     dbg_print!("[DBG] Creating GPU buffers...");
-    let (hi_buf, lo_buf, found_buf, target_buf, prec_buf) = unsafe {
+    let (hi_buf, lo_buf, checksum_buf, found_buf, target_buf, prec_buf) = unsafe {
         let hb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, BATCH_CAP, Some(&hi_arr)).unwrap();
         let lb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, BATCH_CAP, Some(&lo_arr)).unwrap();
+        let cb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, BATCH_CAP, Some(&checksum_arr)).unwrap();
         let fb = core::create_buffer(&context, flags::MEM_READ_WRITE | flags::MEM_COPY_HOST_PTR, found_result.len(), Some(&found_result)).unwrap();
         let tb = core::create_buffer(&context, flags::MEM_READ_WRITE | flags::MEM_COPY_HOST_PTR, 180, Some(&target_mnemonic)).unwrap();
         let pb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, prec_data.len(), Some(&prec_data)).unwrap();
-        (hb, lb, fb, tb, pb)
+        (hb, lb, cb, fb, tb, pb)
     };
 
     dbg_print!("[DBG] All setup complete!");
@@ -203,13 +207,17 @@ fn main() {
     let mut k: u64 = 0;
     let mut max_batch = INITIAL_BATCH.min(BATCH_CAP);
     let mut local_work_size = LOCAL_WORK_SIZES.iter().copied().find(|&s| s <= max_batch).unwrap_or(1);
+    let mut last_report = Instant::now();
+    let mut last_k: u64 = 0;
+    let mut success_iters: u32 = 0;
 
     // Kernel args that don't change each iteration
     core::set_kernel_arg(&kernel, 0, ArgVal::mem(&hi_buf)).unwrap();
     core::set_kernel_arg(&kernel, 1, ArgVal::mem(&lo_buf)).unwrap();
-    core::set_kernel_arg(&kernel, 2, ArgVal::mem(&target_buf)).unwrap();
-    core::set_kernel_arg(&kernel, 3, ArgVal::mem(&found_buf)).unwrap();
-    core::set_kernel_arg(&kernel, 4, ArgVal::mem(&prec_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 2, ArgVal::mem(&checksum_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 3, ArgVal::mem(&target_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 4, ArgVal::mem(&found_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 5, ArgVal::mem(&prec_buf)).unwrap();
     
     while k < TOTAL_PERMS {
         if local_work_size > max_batch {
@@ -224,9 +232,10 @@ fn main() {
         // Prepare batch
         for i in 0..actual_batch {
              let indices = permutation_to_indices(k + (i as u64));
-             let (hi, lo) = encode_mnemonic(&indices);
-             hi_arr[i] = hi;
-             lo_arr[i] = lo;
+            let (hi, lo) = encode_mnemonic(&indices);
+            hi_arr[i] = hi;
+            lo_arr[i] = lo;
+            checksum_arr[i] = (WORDS[indices[11]] & 0x0F) as u8;
         }
 
         // Write inputs - use slices for actual batch size
@@ -242,6 +251,7 @@ fn main() {
                     eprintln!("[DBG] CL_OUT_OF_RESOURCES on write hi at batch 1; retrying with fresh queue");
                 }
                 queue = core::create_command_queue(&context, &device_id, None).unwrap();
+                success_iters = 0;
                 continue;
             }
             panic!("Write buffer (hi) error: {:?}", e);
@@ -259,9 +269,28 @@ fn main() {
                     eprintln!("[DBG] CL_OUT_OF_RESOURCES on write lo at batch 1; retrying with fresh queue");
                 }
                 queue = core::create_command_queue(&context, &device_id, None).unwrap();
+                success_iters = 0;
                 continue;
             }
             panic!("Write buffer (lo) error: {:?}", e);
+        }
+
+        let write_checksum = unsafe {
+             core::enqueue_write_buffer(&queue, &checksum_buf, true, 0, &checksum_arr[0..actual_batch], None::<&core::Event>, None::<&mut core::Event>)
+        };
+        if let Err(e) = write_checksum {
+            if is_out_of_resources(&e) {
+                if max_batch > 1 {
+                    max_batch = (max_batch / 2).max(1);
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write checksum; reducing batch to {}", max_batch);
+                } else {
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write checksum at batch 1; retrying with fresh queue");
+                }
+                queue = core::create_command_queue(&context, &device_id, None).unwrap();
+                success_iters = 0;
+                continue;
+            }
+            panic!("Write buffer (checksum) error: {:?}", e);
         }
 
         found_result.fill(0);
@@ -277,13 +306,14 @@ fn main() {
                     eprintln!("[DBG] CL_OUT_OF_RESOURCES on write found at batch 1; retrying with fresh queue");
                 }
                 queue = core::create_command_queue(&context, &device_id, None).unwrap();
+                success_iters = 0;
                 continue;
             }
             panic!("Write buffer (found) error: {:?}", e);
         }
         
-        // Arguments: 0=hi, 1=lo, 2=target, 3=found, 4=prec_table, 5=batch_len
-        core::set_kernel_arg(&kernel, 5, ArgVal::scalar(&(actual_batch as u32))).unwrap();
+        // Arguments: 0=hi, 1=lo, 2=checksum, 3=target, 4=found, 5=prec_table, 6=batch_len
+        core::set_kernel_arg(&kernel, 6, ArgVal::scalar(&(actual_batch as u32))).unwrap();
 
         // Run
         let padded_batch = ((actual_batch + local_work_size - 1) / local_work_size) * local_work_size;
@@ -304,6 +334,7 @@ fn main() {
                     eprintln!("[DBG] CL_OUT_OF_RESOURCES on enqueue at batch 1; retrying with fresh queue");
                 }
                 queue = core::create_command_queue(&context, &device_id, None).unwrap();
+                success_iters = 0;
                 continue;
             }
             panic!("Kernel enqueue error: {:?}", e);
@@ -325,6 +356,7 @@ fn main() {
                     eprintln!("[DBG] CL_OUT_OF_RESOURCES on read at batch 1; retrying with fresh queue");
                 }
                 queue = core::create_command_queue(&context, &device_id, None).unwrap();
+                success_iters = 0;
                 continue;
             }
             panic!("Read buffer error: {:?}", e);
@@ -350,6 +382,23 @@ fn main() {
         if k % 100000 == 0 {
              print!("\rChecked: {} / {} ({}%)", k, TOTAL_PERMS, (k * 100 / TOTAL_PERMS));
              std::io::stdout().flush().unwrap();
+        }
+
+        if last_report.elapsed() >= Duration::from_secs(THROUGHPUT_REPORT_SECS) {
+            let elapsed = last_report.elapsed().as_secs_f64().max(0.001);
+            let delta = k - last_k;
+            let rate = (delta as f64) / elapsed;
+            eprintln!("[DBG] Rate: {:.0} perms/s | batch {} | local {}", rate, max_batch, local_work_size);
+            last_report = Instant::now();
+            last_k = k;
+        }
+
+        success_iters += 1;
+        if success_iters >= BATCH_GROW_ITERS && max_batch < BATCH_CAP {
+            max_batch = (max_batch * 2).min(BATCH_CAP);
+            local_work_size = LOCAL_WORK_SIZES.iter().copied().find(|&s| s <= max_batch).unwrap_or(1);
+            eprintln!("[DBG] Increasing batch to {} (local {})", max_batch, local_work_size);
+            success_iters = 0;
         }
         
         k += actual_batch as u64;

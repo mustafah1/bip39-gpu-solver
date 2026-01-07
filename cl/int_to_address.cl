@@ -1,7 +1,10 @@
 
 
 // Batch kernel - accepts arrays of pre-computed mnemonic encodings
+__constant uchar TARGET_ADDRESS[25] = {0x05, 0x74, 0xa3, 0x98, 0xff, 0x7b, 0xd2, 0x28, 0x70, 0x8c, 0x73, 0xde, 0xd2, 0x8a, 0xa5, 0xb2, 0x22, 0x61, 0xb0, 0x86, 0x43, 0x8e, 0xe5, 0x6e, 0xd2};
+
 __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mnemonic_lo_arr, 
+                             __global const uchar *checksum_bits,
                              __global uchar * target_mnemonic, __global uchar * found_idx,
                              __global const secp256k1_ge_storage* prec_table,
                              uint batch_len) {
@@ -34,7 +37,10 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
 
   uchar mnemonic_hash[32];
   sha256_bytes(bytes, 16, mnemonic_hash);
-  uchar checksum = (mnemonic_hash[0] >> 4) & ((1 << 4)-1);
+  uchar checksum = (mnemonic_hash[0] >> 4) & 0x0F;
+  if ((checksum_bits[idx] & 0x0F) != checksum) {
+    return;
+  }
   
   ushort indices[12];
   indices[0] = (mnemonic_hi >> 53) & 2047;
@@ -50,23 +56,6 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
   indices[10] = (mnemonic_lo >> 7) & 2047;
   indices[11] = ((mnemonic_lo & ((1 << 7)-1)) << 4) | checksum;
 
-  uchar mnemonic[180] = {0};
-  uchar mnemonic_length = 11 + word_lengths[indices[0]] + word_lengths[indices[1]] + word_lengths[indices[2]] + word_lengths[indices[3]] + word_lengths[indices[4]] + word_lengths[indices[5]] + word_lengths[indices[6]] + word_lengths[indices[7]] + word_lengths[indices[8]] + word_lengths[indices[9]] + word_lengths[indices[10]] + word_lengths[indices[11]];
-  int mnemonic_index = 0;
-  
-  for (int i=0; i < 12; i++) {
-    int word_index = indices[i];
-    int word_length = word_lengths[word_index];
-    
-    for(int j=0;j<word_length;j++) {
-      mnemonic[mnemonic_index] = words[word_index][j];
-      mnemonic_index++;
-    }
-    mnemonic[mnemonic_index] = 32;
-    mnemonic_index++;
-  }
-  mnemonic[mnemonic_index - 1] = 0;
-
   uchar ipad_key[128];
   uchar opad_key[128];
   for(int x=0;x<128;x++){
@@ -74,14 +63,26 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
     opad_key[x] = 0x5c;
   }
 
-  for(int x=0;x<mnemonic_length;x++){
-    ipad_key[x] = ipad_key[x] ^ mnemonic[x];
-    opad_key[x] = opad_key[x] ^ mnemonic[x];
+  int mnemonic_length = 0;
+  for (int i=0; i < 12; i++) {
+    int word_index = indices[i];
+    int word_length = word_lengths[word_index];
+    for(int j=0;j<word_length;j++) {
+      uchar b = words[word_index][j];
+      ipad_key[mnemonic_length] ^= b;
+      opad_key[mnemonic_length] ^= b;
+      mnemonic_length++;
+    }
+    if (i < 11) {
+      ipad_key[mnemonic_length] ^= 32;
+      opad_key[mnemonic_length] ^= 32;
+      mnemonic_length++;
+    }
   }
 
   uchar seed[64] = { 0 };
   uchar sha512_result[64] = { 0 };
-  uchar key_previous_concat[256] = { 0 };
+  uchar key_previous_concat[192] = { 0 };
   uchar salt[12] = { 109, 110, 101, 109, 111, 110, 105, 99, 0, 0, 0, 1 };
   for(int x=0;x<128;x++){
     key_previous_concat[x] = ipad_key[x];
@@ -111,8 +112,6 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
   new_master_from_seed(network, seed, &master_private);
   public_from_private(&master_private, &master_public, prec_table);
 
-  uchar serialized_master_public[33];
-  serialized_public_key(&master_public, serialized_master_public);
   extended_private_key_t target_key;
   extended_public_key_t target_public_key;
   hardened_private_child_from_private(&master_private, &target_key, 49);
@@ -124,12 +123,10 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
 
   uchar raw_address[25] = {0};
   p2shwpkh_address_for_public_key(&target_public_key, raw_address);
-
-  uchar target_address[25] = {0x05, 0x74, 0xa3, 0x98, 0xff, 0x7b, 0xd2, 0x28, 0x70, 0x8c, 0x73, 0xde, 0xd2, 0x8a, 0xa5, 0xb2, 0x22, 0x61, 0xb0, 0x86, 0x43, 0x8e, 0xe5, 0x6e, 0xd2};
  
   bool found_target = 1;
   for(int i=0;i<25;i++) {
-    if(raw_address[i] != target_address[i]){
+    if(raw_address[i] != TARGET_ADDRESS[i]){
       found_target = 0;
     }
   }
@@ -141,8 +138,19 @@ __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mn
     found_idx[2] = (idx >> 16) & 0xFF;
     found_idx[3] = (idx >> 8) & 0xFF;
     found_idx[4] = idx & 0xFF;
-    for(int i=0;i<mnemonic_index;i++) {
-      target_mnemonic[i] = mnemonic[i];
+    int out_idx = 0;
+    for (int i=0; i < 12; i++) {
+      int word_index = indices[i];
+      int word_length = word_lengths[word_index];
+      for(int j=0;j<word_length;j++) {
+        target_mnemonic[out_idx] = words[word_index][j];
+        out_idx++;
+      }
+      if (i < 11) {
+        target_mnemonic[out_idx] = 32;
+        out_idx++;
+      }
     }
+    target_mnemonic[out_idx] = 0;
   }
 }
