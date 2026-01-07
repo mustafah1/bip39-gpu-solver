@@ -3,6 +3,7 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 
 
 def parse_ranges(range_args):
@@ -38,6 +39,8 @@ def main():
     parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--device-index", type=int, default=0)
+    parser.add_argument("--progress-file", default="tools/ranges_progress.log")
+    parser.add_argument("--update-ranges-file", action="store_true", help="Remove completed ranges from ranges file")
     args = parser.parse_args()
 
     ranges = []
@@ -49,6 +52,31 @@ def main():
     if not ranges:
         print("No ranges provided. Use --range start:end or --ranges-file", file=sys.stderr)
         sys.exit(2)
+
+    def log_progress(status, start, end):
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(args.progress_file, "a", encoding="utf-8") as f:
+            f.write(f"{ts} {status} {start}:{end}\n")
+
+    def remove_range_from_file(start, end):
+        if not args.ranges_file:
+            return
+        kept = []
+        with open(args.ranges_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    kept.append(line)
+                    continue
+                if line == f"{start}:{end}":
+                    continue
+                kept.append(line)
+        tmp_path = args.ranges_file + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            for line in kept:
+                if line:
+                    f.write(line + "\n")
+        os.replace(tmp_path, args.ranges_file)
 
     for start, end in ranges:
         cmd = [
@@ -62,9 +90,14 @@ def main():
         if args.gpu_stats is not None:
             cmd.append(f"--gpu-stats={args.gpu_stats}")
         print("$", " ".join(cmd), flush=True)
+        log_progress("START", start, end)
         result = subprocess.run(cmd)
         if result.returncode != 0:
+            log_progress("FAIL", start, end)
             sys.exit(result.returncode)
+        log_progress("DONE", start, end)
+        if args.update_ranges_file:
+            remove_range_from_file(start, end)
 
 
 if __name__ == "__main__":
