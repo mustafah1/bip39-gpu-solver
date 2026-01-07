@@ -3,6 +3,8 @@ use std::ffi::CString;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use std::thread;
 use std::time::{Duration, Instant};
+use std::env;
+use std::process::Command;
 use ocl::{core, flags};
 use ocl::enums::ArgVal;
 use ocl::builders::ContextProperties;
@@ -56,6 +58,48 @@ fn is_out_of_resources(err: &OclCoreError) -> bool {
     format!("{:?}", err).contains("CL_OUT_OF_RESOURCES")
 }
 
+fn parse_gpu_stats_interval() -> Option<u64> {
+    for arg in env::args().skip(1) {
+        if let Some(val) = arg.strip_prefix("--gpu-stats=") {
+            if let Ok(secs) = val.parse::<u64>() {
+                return Some(secs.max(1));
+            }
+        } else if arg == "--gpu-stats" {
+            return Some(5);
+        }
+    }
+    None
+}
+
+fn start_gpu_stats_thread(interval_secs: u64, stop: Arc<AtomicBool>) {
+    thread::spawn(move || {
+        while !stop.load(Ordering::Relaxed) {
+            let output = Command::new("nvidia-smi")
+                .args([
+                    "--query-gpu=utilization.gpu,utilization.memory,memory.used,memory.total",
+                    "--format=csv,noheader,nounits",
+                ])
+                .output();
+            if let Ok(out) = output {
+                if out.status.success() {
+                    if let Ok(text) = String::from_utf8(out.stdout) {
+                        let line = text.trim();
+                        if !line.is_empty() {
+                            eprintln!("[GPU] util {}, mem util {}, {} MiB / {} MiB", 
+                                line.split(',').nth(0).unwrap_or("?").trim(),
+                                line.split(',').nth(1).unwrap_or("?").trim(),
+                                line.split(',').nth(2).unwrap_or("?").trim(),
+                                line.split(',').nth(3).unwrap_or("?").trim(),
+                            );
+                        }
+                    }
+                }
+            }
+            thread::sleep(Duration::from_secs(interval_secs));
+        }
+    });
+}
+
 fn load_kernel_source() -> String {
     // Exclude 'secp256k1_prec' because we load it manually into a buffer
     let files = ["common", "ripemd", "sha2", "secp256k1_common", "secp256k1_scalar", 
@@ -101,6 +145,13 @@ fn load_prec_table() -> Vec<u32> {
 
 fn main() {
     dbg_print!("[DBG] Starting...");
+
+    let gpu_stats_interval = parse_gpu_stats_interval();
+    let gpu_stats_stop = Arc::new(AtomicBool::new(false));
+    if let Some(secs) = gpu_stats_interval {
+        eprintln!("[DBG] GPU stats enabled (every {}s)", secs);
+        start_gpu_stats_thread(secs, Arc::clone(&gpu_stats_stop));
+    }
     
     println!("╔════════════════════════════════════════════════════════════╗");
     println!("║     GPU BIP39 12-Word Permutation Scanner                  ║");
@@ -342,4 +393,6 @@ fn main() {
     }
     
     println!("\nDone.");
+
+    gpu_stats_stop.store(true, Ordering::Relaxed);
 }
