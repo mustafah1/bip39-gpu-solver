@@ -103,6 +103,28 @@ fn parse_device_index() -> usize {
     0
 }
 
+fn parse_range_args() -> (u64, u64) {
+    let mut start: u64 = 0;
+    let mut end: u64 = TOTAL_PERMS;
+    for arg in env::args().skip(1) {
+        if let Some(val) = arg.strip_prefix("--start=") {
+            if let Ok(v) = val.parse::<u64>() {
+                start = v.min(TOTAL_PERMS);
+            }
+        } else if let Some(val) = arg.strip_prefix("--end=") {
+            if let Ok(v) = val.parse::<u64>() {
+                end = v.min(TOTAL_PERMS);
+            }
+        }
+    }
+    if end < start {
+        eprintln!("[WARN] end < start, swapping values");
+        (end, start)
+    } else {
+        (start, end)
+    }
+}
+
 fn start_gpu_stats_thread(interval_secs: u64, stop: Arc<AtomicBool>) {
     thread::spawn(move || {
         while !stop.load(Ordering::Relaxed) {
@@ -188,6 +210,10 @@ fn main() {
     let (shard_count, shard_index) = parse_shard_args();
     if shard_count > 1 {
         eprintln!("[DBG] Sharding enabled: {}/{}", shard_index, shard_count);
+    }
+    let (range_start, range_end) = parse_range_args();
+    if range_start != 0 || range_end != TOTAL_PERMS {
+        eprintln!("[DBG] Range enabled: {} -> {}", range_start, range_end);
     }
     
     println!("╔════════════════════════════════════════════════════════════╗");
@@ -281,7 +307,7 @@ fn main() {
     println!("✅ Ready\n");
     println!("🚀 Starting GPU search...");
 
-    let mut k: u64 = shard_index as u64;
+    let mut k: u64 = range_start + shard_index as u64;
     let mut max_batch = INITIAL_BATCH.min(BATCH_CAP);
     let mut local_work_size = LOCAL_WORK_SIZES.iter().copied().find(|&s| s <= max_batch).unwrap_or(1);
     let mut last_report = Instant::now();
@@ -290,19 +316,26 @@ fn main() {
     let mut read_counter: u32 = 0;
 
     // Kernel args that don't change each iteration
-    core::set_kernel_arg(&kernel, 1, ArgVal::mem(&target_buf)).unwrap();
-    core::set_kernel_arg(&kernel, 2, ArgVal::mem(&found_buf)).unwrap();
-    core::set_kernel_arg(&kernel, 3, ArgVal::mem(&prec_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 2, ArgVal::mem(&target_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 3, ArgVal::mem(&found_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 4, ArgVal::mem(&prec_buf)).unwrap();
     
-    while k < TOTAL_PERMS {
+    while k < range_end {
         if local_work_size > max_batch {
             local_work_size = LOCAL_WORK_SIZES.iter().copied().find(|&s| s <= max_batch).unwrap_or(1);
         }
-        let actual_batch = if k + (max_batch as u64) > TOTAL_PERMS {
-            (TOTAL_PERMS - k) as usize
+        let remaining = range_end.saturating_sub(k);
+        let max_batch_u64 = max_batch as u64;
+        let stride_u64 = shard_count as u64;
+        let max_items = if remaining == 0 {
+            0
         } else {
-            max_batch
+            ((remaining - 1) / stride_u64) + 1
         };
+        let actual_batch = (max_items.min(max_batch_u64)) as usize;
+        if actual_batch == 0 {
+            break;
+        }
 
         if read_counter == 0 {
             found_result.fill(0);
@@ -411,7 +444,7 @@ fn main() {
             let elapsed = last_report.elapsed().as_secs_f64().max(0.001);
             let delta = k - last_k;
             let rate = (delta as f64) / elapsed;
-            let remaining = TOTAL_PERMS.saturating_sub(k);
+            let remaining = range_end.saturating_sub(k);
             let eta_secs = if rate > 0.0 { (remaining as f64) / rate } else { 0.0 };
             eprintln!(
                 "[DBG] Rate: {:.0} perms/s | batch {} | local {} | eta {:.1}h",
