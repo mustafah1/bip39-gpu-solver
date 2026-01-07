@@ -13,8 +13,9 @@ use std::io::{Write}; // stderr unused
 // Our 12 words - BIP39 indices
 const WORDS: [u16; 12] = [112, 146, 238, 608, 759, 905, 1251, 1348, 1437, 1559, 1597, 1841];
 const TOTAL_PERMS: u64 = 479_001_600;
-const BATCH_SIZE: usize = 64; // Restored to 64 for optimized run
-const LOCAL_WORK_SIZE: usize = 1; // Limit workgroup size to reduce per-CU resource pressure
+const INITIAL_BATCH: usize = 64;
+const BATCH_CAP: usize = 1024;
+const LOCAL_WORK_SIZES: [usize; 8] = [128, 64, 32, 16, 8, 4, 2, 1];
 const BUILD_HEARTBEAT_SECS: u64 = 10;
 
 const WORD_STRINGS: [&str; 12] = [
@@ -115,7 +116,7 @@ fn main() {
     println!("║ Words:  asset basket capital execute gauge improve         ║");
     println!("║         pair price require sell share trend                ║");
     println!("║ Total:  479,001,600 permutations                           ║");
-    println!("║ Batch:  {} GPU work items/call                           ║", BATCH_SIZE);
+    println!("║ Batch:  {} GPU work items/call                           ║", INITIAL_BATCH);
     println!("╚════════════════════════════════════════════════════════════╝");
     
     // 1. Load Data First
@@ -180,15 +181,15 @@ fn main() {
     
     // Buffers
     dbg_print!("[DBG] Allocating host arrays...");
-    let mut hi_arr = vec![0u64; BATCH_SIZE];
-    let mut lo_arr = vec![0u64; BATCH_SIZE];
+    let mut hi_arr = vec![0u64; BATCH_CAP];
+    let mut lo_arr = vec![0u64; BATCH_CAP];
     let target_mnemonic = vec![0u8; 180];
     let mut found_result = vec![0u8; 8];
     
     dbg_print!("[DBG] Creating GPU buffers...");
     let (hi_buf, lo_buf, found_buf, target_buf, prec_buf) = unsafe {
-        let hb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, BATCH_SIZE, Some(&hi_arr)).unwrap();
-        let lb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, BATCH_SIZE, Some(&lo_arr)).unwrap();
+        let hb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, BATCH_CAP, Some(&hi_arr)).unwrap();
+        let lb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, BATCH_CAP, Some(&lo_arr)).unwrap();
         let fb = core::create_buffer(&context, flags::MEM_READ_WRITE | flags::MEM_COPY_HOST_PTR, found_result.len(), Some(&found_result)).unwrap();
         let tb = core::create_buffer(&context, flags::MEM_READ_WRITE | flags::MEM_COPY_HOST_PTR, 180, Some(&target_mnemonic)).unwrap();
         let pb = core::create_buffer(&context, flags::MEM_READ_ONLY | flags::MEM_COPY_HOST_PTR, prec_data.len(), Some(&prec_data)).unwrap();
@@ -200,9 +201,20 @@ fn main() {
     println!("🚀 Starting GPU search...");
 
     let mut k: u64 = 0;
-    let mut max_batch = BATCH_SIZE;
+    let mut max_batch = INITIAL_BATCH.min(BATCH_CAP);
+    let mut local_work_size = LOCAL_WORK_SIZES.iter().copied().find(|&s| s <= max_batch).unwrap_or(1);
+
+    // Kernel args that don't change each iteration
+    core::set_kernel_arg(&kernel, 0, ArgVal::mem(&hi_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 1, ArgVal::mem(&lo_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 2, ArgVal::mem(&target_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 3, ArgVal::mem(&found_buf)).unwrap();
+    core::set_kernel_arg(&kernel, 4, ArgVal::mem(&prec_buf)).unwrap();
     
     while k < TOTAL_PERMS {
+        if local_work_size > max_batch {
+            local_work_size = LOCAL_WORK_SIZES.iter().copied().find(|&s| s <= max_batch).unwrap_or(1);
+        }
         let actual_batch = if k + (max_batch as u64) > TOTAL_PERMS {
             (TOTAL_PERMS - k) as usize
         } else {
@@ -270,24 +282,24 @@ fn main() {
             panic!("Write buffer (found) error: {:?}", e);
         }
         
-        // Arguments: 0=hi, 1=lo, 2=target, 3=found, 4=prec_table
-        core::set_kernel_arg(&kernel, 0, ArgVal::mem(&hi_buf)).unwrap();
-        core::set_kernel_arg(&kernel, 1, ArgVal::mem(&lo_buf)).unwrap();
-        core::set_kernel_arg(&kernel, 2, ArgVal::mem(&target_buf)).unwrap();
-        core::set_kernel_arg(&kernel, 3, ArgVal::mem(&found_buf)).unwrap();
-        core::set_kernel_arg(&kernel, 4, ArgVal::mem(&prec_buf)).unwrap();
+        // Arguments: 0=hi, 1=lo, 2=target, 3=found, 4=prec_table, 5=batch_len
+        core::set_kernel_arg(&kernel, 5, ArgVal::scalar(&(actual_batch as u32))).unwrap();
 
         // Run
-        let global_work_size = [actual_batch, 1, 1];
-        let local_work_size = [LOCAL_WORK_SIZE, 1, 1];
+        let padded_batch = ((actual_batch + local_work_size - 1) / local_work_size) * local_work_size;
+        let global_work_size = [padded_batch, 1, 1];
+        let local_work_size_arr = [local_work_size, 1, 1];
         let enqueue_res = unsafe {
-            core::enqueue_kernel(&queue, &kernel, 1, None, &global_work_size, Some(local_work_size), None::<&core::Event>, None::<&mut core::Event>)
+            core::enqueue_kernel(&queue, &kernel, 1, None, &global_work_size, Some(local_work_size_arr), None::<&core::Event>, None::<&mut core::Event>)
         };
         if let Err(e) = enqueue_res {
             if is_out_of_resources(&e) {
                 if max_batch > 1 {
                     max_batch = (max_batch / 2).max(1);
                     eprintln!("[DBG] CL_OUT_OF_RESOURCES on enqueue; reducing batch to {}", max_batch);
+                } else if local_work_size > 1 {
+                    local_work_size = LOCAL_WORK_SIZES.iter().copied().find(|&s| s < local_work_size).unwrap_or(1);
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on enqueue; reducing local size to {}", local_work_size);
                 } else {
                     eprintln!("[DBG] CL_OUT_OF_RESOURCES on enqueue at batch 1; retrying with fresh queue");
                 }
@@ -306,6 +318,9 @@ fn main() {
                 if max_batch > 1 {
                     max_batch = (max_batch / 2).max(1);
                     eprintln!("[DBG] CL_OUT_OF_RESOURCES on read; reducing batch to {}", max_batch);
+                } else if local_work_size > 1 {
+                    local_work_size = LOCAL_WORK_SIZES.iter().copied().find(|&s| s < local_work_size).unwrap_or(1);
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on read; reducing local size to {}", local_work_size);
                 } else {
                     eprintln!("[DBG] CL_OUT_OF_RESOURCES on read at batch 1; retrying with fresh queue");
                 }

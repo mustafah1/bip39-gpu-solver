@@ -3,8 +3,12 @@
 // Batch kernel - accepts arrays of pre-computed mnemonic encodings
 __kernel void int_to_address(__global ulong* mnemonic_hi_arr, __global ulong* mnemonic_lo_arr, 
                              __global uchar * target_mnemonic, __global uchar * found_idx,
-                             __global const secp256k1_ge_storage* prec_table) {
+                             __global const secp256k1_ge_storage* prec_table,
+                             uint batch_len) {
   ulong idx = get_global_id(0);
+  if (idx >= batch_len) {
+    return;
+  }
   
   ulong mnemonic_hi = mnemonic_hi_arr[idx];
   ulong mnemonic_lo = mnemonic_lo_arr[idx];
