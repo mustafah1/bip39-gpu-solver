@@ -13,8 +13,12 @@ __kernel void int_to_address(ulong start_k,
   if (idx >= batch_len) {
     return;
   }
+  if (found_idx[0] != 0) {
+    return;
+  }
 
   ulong k = start_k + idx;
+  uint global_idx = (uint)k;
   ushort remaining[12];
   ushort indices[12];
   for (int i = 0; i < 12; i++) {
@@ -143,11 +147,11 @@ __kernel void int_to_address(ulong start_k,
 
   if(found_target == 1) {
     found_idx[0] = 0x01;
-    // Store the index that was found
-    found_idx[1] = (idx >> 24) & 0xFF;
-    found_idx[2] = (idx >> 16) & 0xFF;
-    found_idx[3] = (idx >> 8) & 0xFF;
-    found_idx[4] = idx & 0xFF;
+    // Store the absolute index that was found
+    found_idx[1] = (global_idx >> 24) & 0xFF;
+    found_idx[2] = (global_idx >> 16) & 0xFF;
+    found_idx[3] = (global_idx >> 8) & 0xFF;
+    found_idx[4] = global_idx & 0xFF;
     int out_idx = 0;
     for (int i=0; i < 12; i++) {
       int word_index = indices[i];

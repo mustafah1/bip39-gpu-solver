@@ -13,11 +13,12 @@ use std::io::{Write}; // stderr unused
 // Our 12 words - BIP39 strings
 const TOTAL_PERMS: u64 = 479_001_600;
 const INITIAL_BATCH: usize = 64;
-const BATCH_CAP: usize = 4096;
-const LOCAL_WORK_SIZES: [usize; 8] = [128, 64, 32, 16, 8, 4, 2, 1];
+const BATCH_CAP: usize = 16384;
+const LOCAL_WORK_SIZES: [usize; 9] = [256, 128, 64, 32, 16, 8, 4, 2, 1];
 const BUILD_HEARTBEAT_SECS: u64 = 10;
 const THROUGHPUT_REPORT_SECS: u64 = 5;
 const BATCH_GROW_ITERS: u32 = 100;
+const READ_BACK_EVERY: u32 = 8;
 
 const WORD_STRINGS: [&str; 12] = [
     "asset", "basket", "capital", "execute", "gauge", "improve",
@@ -194,6 +195,7 @@ fn main() {
     let mut last_report = Instant::now();
     let mut last_k: u64 = 0;
     let mut success_iters: u32 = 0;
+    let mut read_counter: u32 = 0;
 
     // Kernel args that don't change each iteration
     core::set_kernel_arg(&kernel, 1, ArgVal::mem(&target_buf)).unwrap();
@@ -210,23 +212,25 @@ fn main() {
             max_batch
         };
 
-        found_result.fill(0);
-        let write_found = unsafe {
-             core::enqueue_write_buffer(&queue, &found_buf, true, 0, &found_result, None::<&core::Event>, None::<&mut core::Event>)
-        };
-        if let Err(e) = write_found {
-            if is_out_of_resources(&e) {
-                if max_batch > 1 {
-                    max_batch = (max_batch / 2).max(1);
-                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write found; reducing batch to {}", max_batch);
-                } else {
-                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write found at batch 1; retrying with fresh queue");
+        if read_counter == 0 {
+            found_result.fill(0);
+            let write_found = unsafe {
+                 core::enqueue_write_buffer(&queue, &found_buf, true, 0, &found_result, None::<&core::Event>, None::<&mut core::Event>)
+            };
+            if let Err(e) = write_found {
+                if is_out_of_resources(&e) {
+                    if max_batch > 1 {
+                        max_batch = (max_batch / 2).max(1);
+                        eprintln!("[DBG] CL_OUT_OF_RESOURCES on write found; reducing batch to {}", max_batch);
+                    } else {
+                        eprintln!("[DBG] CL_OUT_OF_RESOURCES on write found at batch 1; retrying with fresh queue");
+                    }
+                    queue = core::create_command_queue(&context, &device_id, None).unwrap();
+                    success_iters = 0;
+                    continue;
                 }
-                queue = core::create_command_queue(&context, &device_id, None).unwrap();
-                success_iters = 0;
-                continue;
+                panic!("Write buffer (found) error: {:?}", e);
             }
-            panic!("Write buffer (found) error: {:?}", e);
         }
         
         // Arguments: 0=start_k, 1=target, 2=found, 3=prec_table, 4=batch_len
@@ -259,37 +263,44 @@ fn main() {
         }
         
          // Read result
-        let read_res = unsafe {
-            core::enqueue_read_buffer(&queue, &found_buf, true, 0, &mut found_result, None::<&core::Event>, None::<&mut core::Event>)
-        };
-        if let Err(e) = read_res {
-            if is_out_of_resources(&e) {
-                if max_batch > 1 {
-                    max_batch = (max_batch / 2).max(1);
-                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on read; reducing batch to {}", max_batch);
-                } else if local_work_size > 1 {
-                    local_work_size = LOCAL_WORK_SIZES.iter().copied().find(|&s| s < local_work_size).unwrap_or(1);
-                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on read; reducing local size to {}", local_work_size);
-                } else {
-                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on read at batch 1; retrying with fresh queue");
+        let should_read = read_counter + 1 >= READ_BACK_EVERY || k + (actual_batch as u64) >= TOTAL_PERMS;
+        if should_read {
+            let read_res = unsafe {
+                core::enqueue_read_buffer(&queue, &found_buf, true, 0, &mut found_result, None::<&core::Event>, None::<&mut core::Event>)
+            };
+            if let Err(e) = read_res {
+                if is_out_of_resources(&e) {
+                    if max_batch > 1 {
+                        max_batch = (max_batch / 2).max(1);
+                        eprintln!("[DBG] CL_OUT_OF_RESOURCES on read; reducing batch to {}", max_batch);
+                    } else if local_work_size > 1 {
+                        local_work_size = LOCAL_WORK_SIZES.iter().copied().find(|&s| s < local_work_size).unwrap_or(1);
+                        eprintln!("[DBG] CL_OUT_OF_RESOURCES on read; reducing local size to {}", local_work_size);
+                    } else {
+                        eprintln!("[DBG] CL_OUT_OF_RESOURCES on read at batch 1; retrying with fresh queue");
+                    }
+                    queue = core::create_command_queue(&context, &device_id, None).unwrap();
+                    success_iters = 0;
+                    read_counter = 0;
+                    continue;
                 }
-                queue = core::create_command_queue(&context, &device_id, None).unwrap();
-                success_iters = 0;
-                continue;
+                panic!("Read buffer error: {:?}", e);
             }
-            panic!("Read buffer error: {:?}", e);
+            read_counter = 0;
+        } else {
+            read_counter += 1;
         }
 
         if found_result[0] == 1 {
              println!("\n🎉 FOUND IT!");
-             // Parse found index
-             let found_idx_val = ((found_result[1] as u64) << 24) | 
-                                 ((found_result[2] as u64) << 16) | 
-                                 ((found_result[3] as u64) << 8) | 
+             // Parse found absolute index
+             let found_idx_val = ((found_result[1] as u64) << 24) |
+                                 ((found_result[2] as u64) << 16) |
+                                 ((found_result[3] as u64) << 8) |
                                   (found_result[4] as u64);
                                   
              println!("Match at offset: {}", found_idx_val);
-             let final_scan_idx = k + found_idx_val;
+             let final_scan_idx = found_idx_val;
              let indices = permutation_to_indices(final_scan_idx);
              let words = perm_to_words(&indices);
              println!("Mnemonic: {}", words);
@@ -306,7 +317,15 @@ fn main() {
             let elapsed = last_report.elapsed().as_secs_f64().max(0.001);
             let delta = k - last_k;
             let rate = (delta as f64) / elapsed;
-            eprintln!("[DBG] Rate: {:.0} perms/s | batch {} | local {}", rate, max_batch, local_work_size);
+            let remaining = TOTAL_PERMS.saturating_sub(k);
+            let eta_secs = if rate > 0.0 { (remaining as f64) / rate } else { 0.0 };
+            eprintln!(
+                "[DBG] Rate: {:.0} perms/s | batch {} | local {} | eta {:.1}h",
+                rate,
+                max_batch,
+                local_work_size,
+                eta_secs / 3600.0
+            );
             last_report = Instant::now();
             last_k = k;
         }
