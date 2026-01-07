@@ -22,7 +22,7 @@ CURRENT_WORDS = [
 DEFAULT_ALTS = {
     "execute": ["excuse", "exotic", "expand", "explain"],
     "asset": ["assist", "assume", "asthma"],
-    "pair": ["paint", "panel", "paper", "park"],
+    "pair": ["pair", "paint", "panel", "paper", "park", "pine"],
     "sell": ["self", "seminar", "senior", "sense", "sentence"],
     "gauge": ["game", "gap", "garage", "garden", "garlic", "gas"],
 }
@@ -76,6 +76,11 @@ def main():
                 f"--words={phrase}",
             ]
             update_res = run(update_cmd)
+            if update_res.returncode == 2:
+                ts = time.strftime("%Y-%m-%d %H:%M:%S")
+                with open(args.progress_file, "a", encoding="utf-8") as f:
+                    f.write(f"{ts} SKIP {word} -> {alt} (not in BIP39)\n")
+                continue
             if update_res.returncode != 0:
                 raise SystemExit(update_res.returncode)
 

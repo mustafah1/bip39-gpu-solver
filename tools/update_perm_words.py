@@ -31,7 +31,8 @@ def main():
     try:
         indices = [word_map[w] for w in words]
     except KeyError as e:
-        raise SystemExit(f"Unknown word in list: {e.args[0]}")
+        print(f"Unknown word in list: {e.args[0]}", file=sys.stderr)
+        raise SystemExit(2)
 
     kernel_path = pathlib.Path(args.kernel)
     text = kernel_path.read_text(encoding="utf-8")
