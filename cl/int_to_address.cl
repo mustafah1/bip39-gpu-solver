@@ -6,6 +6,7 @@ __constant ushort PERM_WORDS[12] = {112, 146, 238, 608, 759, 905, 1251, 1348, 14
 __constant ulong FACTORIALS[13] = {1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880, 3628800, 39916800, 479001600};
 
 __kernel void int_to_address(ulong start_k,
+                             uint stride,
                              __global uchar * target_mnemonic, __global uchar * found_idx,
                              __global const secp256k1_ge_storage* prec_table,
                              uint batch_len) {
@@ -17,7 +18,7 @@ __kernel void int_to_address(ulong start_k,
     return;
   }
 
-  ulong k = start_k + idx;
+  ulong k = start_k + (idx * (ulong)stride);
   uint global_idx = (uint)k;
   ushort remaining[12];
   ushort indices[12];

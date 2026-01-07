@@ -71,6 +71,27 @@ fn parse_gpu_stats_interval() -> Option<u64> {
     None
 }
 
+fn parse_shard_args() -> (u32, u32) {
+    let mut shard_count: u32 = 1;
+    let mut shard_index: u32 = 0;
+    for arg in env::args().skip(1) {
+        if let Some(val) = arg.strip_prefix("--shard-count=") {
+            if let Ok(count) = val.parse::<u32>() {
+                shard_count = count.max(1);
+            }
+        } else if let Some(val) = arg.strip_prefix("--shard-index=") {
+            if let Ok(index) = val.parse::<u32>() {
+                shard_index = index;
+            }
+        }
+    }
+    if shard_index >= shard_count {
+        eprintln!("[WARN] shard-index {} >= shard-count {}; clamping to 0", shard_index, shard_count);
+        shard_index = 0;
+    }
+    (shard_count, shard_index)
+}
+
 fn start_gpu_stats_thread(interval_secs: u64, stop: Arc<AtomicBool>) {
     thread::spawn(move || {
         while !stop.load(Ordering::Relaxed) {
@@ -151,6 +172,11 @@ fn main() {
     if let Some(secs) = gpu_stats_interval {
         eprintln!("[DBG] GPU stats enabled (every {}s)", secs);
         start_gpu_stats_thread(secs, Arc::clone(&gpu_stats_stop));
+    }
+
+    let (shard_count, shard_index) = parse_shard_args();
+    if shard_count > 1 {
+        eprintln!("[DBG] Sharding enabled: {}/{}", shard_index, shard_count);
     }
     
     println!("╔════════════════════════════════════════════════════════════╗");
@@ -240,7 +266,7 @@ fn main() {
     println!("✅ Ready\n");
     println!("🚀 Starting GPU search...");
 
-    let mut k: u64 = 0;
+    let mut k: u64 = shard_index as u64;
     let mut max_batch = INITIAL_BATCH.min(BATCH_CAP);
     let mut local_work_size = LOCAL_WORK_SIZES.iter().copied().find(|&s| s <= max_batch).unwrap_or(1);
     let mut last_report = Instant::now();
@@ -284,9 +310,11 @@ fn main() {
             }
         }
         
-        // Arguments: 0=start_k, 1=target, 2=found, 3=prec_table, 4=batch_len
+        // Arguments: 0=start_k, 1=stride, 2=target, 3=found, 4=prec_table, 5=batch_len
+        let stride = shard_count;
         core::set_kernel_arg(&kernel, 0, ArgVal::scalar(&k)).unwrap();
-        core::set_kernel_arg(&kernel, 4, ArgVal::scalar(&(actual_batch as u32))).unwrap();
+        core::set_kernel_arg(&kernel, 1, ArgVal::scalar(&stride)).unwrap();
+        core::set_kernel_arg(&kernel, 5, ArgVal::scalar(&(actual_batch as u32))).unwrap();
 
         // Run
         let padded_batch = ((actual_batch + local_work_size - 1) / local_work_size) * local_work_size;
@@ -389,7 +417,7 @@ fn main() {
             success_iters = 0;
         }
         
-        k += actual_batch as u64;
+        k += (actual_batch as u64) * (shard_count as u64);
     }
     
     println!("\nDone.");
