@@ -92,6 +92,17 @@ fn parse_shard_args() -> (u32, u32) {
     (shard_count, shard_index)
 }
 
+fn parse_device_index() -> usize {
+    for arg in env::args().skip(1) {
+        if let Some(val) = arg.strip_prefix("--device-index=") {
+            if let Ok(idx) = val.parse::<usize>() {
+                return idx;
+            }
+        }
+    }
+    0
+}
+
 fn start_gpu_stats_thread(interval_secs: u64, stop: Arc<AtomicBool>) {
     thread::spawn(move || {
         while !stop.load(Ordering::Relaxed) {
@@ -200,7 +211,11 @@ fn main() {
         .expect("No GPU");
     
     println!("\n✅ Found {} GPU(s)", device_ids.len());
-    let device_id = device_ids[0];
+    let device_index = parse_device_index();
+    if device_index >= device_ids.len() {
+        eprintln!("[WARN] device-index {} out of range, defaulting to 0", device_index);
+    }
+    let device_id = device_ids[device_index.min(device_ids.len().saturating_sub(1))];
     let dev_name = core::get_device_info(&device_id, core::DeviceInfo::Name).unwrap();
     println!("✅ Using: {}", dev_name);
     
