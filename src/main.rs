@@ -173,7 +173,7 @@ fn main() {
     println!("✅ Kernels compiled");
     
     dbg_print!("[DBG] Creating command queue...");
-    let queue = core::create_command_queue(&context, &device_id, None).unwrap();
+    let mut queue = core::create_command_queue(&context, &device_id, None).unwrap();
     
     dbg_print!("[DBG] Creating kernel...");
     let kernel = core::create_kernel(&program, "int_to_address").unwrap();
@@ -222,9 +222,14 @@ fn main() {
              core::enqueue_write_buffer(&queue, &hi_buf, true, 0, &hi_arr[0..actual_batch], None::<&core::Event>, None::<&mut core::Event>)
         };
         if let Err(e) = write_hi {
-            if is_out_of_resources(&e) && max_batch > 1 {
-                max_batch = (max_batch / 2).max(1);
-                eprintln!("[DBG] CL_OUT_OF_RESOURCES on write hi; reducing batch to {}", max_batch);
+            if is_out_of_resources(&e) {
+                if max_batch > 1 {
+                    max_batch = (max_batch / 2).max(1);
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write hi; reducing batch to {}", max_batch);
+                } else {
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write hi at batch 1; retrying with fresh queue");
+                }
+                queue = core::create_command_queue(&context, &device_id, None).unwrap();
                 continue;
             }
             panic!("Write buffer (hi) error: {:?}", e);
@@ -234,9 +239,14 @@ fn main() {
              core::enqueue_write_buffer(&queue, &lo_buf, true, 0, &lo_arr[0..actual_batch], None::<&core::Event>, None::<&mut core::Event>)
         };
         if let Err(e) = write_lo {
-            if is_out_of_resources(&e) && max_batch > 1 {
-                max_batch = (max_batch / 2).max(1);
-                eprintln!("[DBG] CL_OUT_OF_RESOURCES on write lo; reducing batch to {}", max_batch);
+            if is_out_of_resources(&e) {
+                if max_batch > 1 {
+                    max_batch = (max_batch / 2).max(1);
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write lo; reducing batch to {}", max_batch);
+                } else {
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write lo at batch 1; retrying with fresh queue");
+                }
+                queue = core::create_command_queue(&context, &device_id, None).unwrap();
                 continue;
             }
             panic!("Write buffer (lo) error: {:?}", e);
@@ -247,9 +257,14 @@ fn main() {
              core::enqueue_write_buffer(&queue, &found_buf, true, 0, &found_result, None::<&core::Event>, None::<&mut core::Event>)
         };
         if let Err(e) = write_found {
-            if is_out_of_resources(&e) && max_batch > 1 {
-                max_batch = (max_batch / 2).max(1);
-                eprintln!("[DBG] CL_OUT_OF_RESOURCES on write found; reducing batch to {}", max_batch);
+            if is_out_of_resources(&e) {
+                if max_batch > 1 {
+                    max_batch = (max_batch / 2).max(1);
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write found; reducing batch to {}", max_batch);
+                } else {
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on write found at batch 1; retrying with fresh queue");
+                }
+                queue = core::create_command_queue(&context, &device_id, None).unwrap();
                 continue;
             }
             panic!("Write buffer (found) error: {:?}", e);
@@ -269,9 +284,14 @@ fn main() {
             core::enqueue_kernel(&queue, &kernel, 1, None, &global_work_size, Some(local_work_size), None::<&core::Event>, None::<&mut core::Event>)
         };
         if let Err(e) = enqueue_res {
-            if is_out_of_resources(&e) && max_batch > 1 {
-                max_batch = (max_batch / 2).max(1);
-                eprintln!("[DBG] CL_OUT_OF_RESOURCES on enqueue; reducing batch to {}", max_batch);
+            if is_out_of_resources(&e) {
+                if max_batch > 1 {
+                    max_batch = (max_batch / 2).max(1);
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on enqueue; reducing batch to {}", max_batch);
+                } else {
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on enqueue at batch 1; retrying with fresh queue");
+                }
+                queue = core::create_command_queue(&context, &device_id, None).unwrap();
                 continue;
             }
             panic!("Kernel enqueue error: {:?}", e);
@@ -282,9 +302,14 @@ fn main() {
             core::enqueue_read_buffer(&queue, &found_buf, true, 0, &mut found_result, None::<&core::Event>, None::<&mut core::Event>)
         };
         if let Err(e) = read_res {
-            if is_out_of_resources(&e) && max_batch > 1 {
-                max_batch = (max_batch / 2).max(1);
-                eprintln!("[DBG] CL_OUT_OF_RESOURCES on read; reducing batch to {}", max_batch);
+            if is_out_of_resources(&e) {
+                if max_batch > 1 {
+                    max_batch = (max_batch / 2).max(1);
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on read; reducing batch to {}", max_batch);
+                } else {
+                    eprintln!("[DBG] CL_OUT_OF_RESOURCES on read at batch 1; retrying with fresh queue");
+                }
+                queue = core::create_command_queue(&context, &device_id, None).unwrap();
                 continue;
             }
             panic!("Read buffer error: {:?}", e);
