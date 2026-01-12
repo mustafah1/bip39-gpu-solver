@@ -2,7 +2,8 @@
 
 // Batch kernel - generates permutations on GPU
 __constant uchar TARGET_ADDRESS[25] = {0x05, 0x74, 0xa3, 0x98, 0xff, 0x7b, 0xd2, 0x28, 0x70, 0x8c, 0x73, 0xde, 0xd2, 0x8a, 0xa5, 0xb2, 0x22, 0x61, 0xb0, 0x86, 0x43, 0x8e, 0xe5, 0x6e, 0xd2};
-__constant ushort PERM_WORDS[12] = {112, 146, 238, 608, 759, 905, 1251, 1348, 1437, 1559, 1597, 1841};
+// Seed words (BIP39 indices): gauge, price, basket, capital, improve, execute, trade, derive, account, abandon, asset, market
+__constant ushort PERM_WORDS[12] = {772, 1363, 153, 272, 912, 633, 1845, 475, 12, 0, 109, 1089};
 __constant ulong FACTORIALS[13] = {1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880, 3628800, 39916800, 479001600};
 
 __kernel void int_to_address(ulong start_k,
