@@ -20,7 +20,7 @@ def format_perm_words(indices):
 def main():
     parser = argparse.ArgumentParser(description="Update PERM_WORDS in int_to_address.cl")
     parser.add_argument("--kernel", default="cl/int_to_address.cl")
-    parser.add_argument("--wordlist", default="../bip39_wordlist.txt")
+    parser.add_argument("--wordlist", default="bip39_wordlist.txt")
     parser.add_argument("--words", required=True, help="Space-separated 12 words")
     args = parser.parse_args()
 
@@ -36,11 +36,12 @@ def main():
 
     kernel_path = pathlib.Path(args.kernel)
     text = kernel_path.read_text(encoding="utf-8")
-    pattern = r"^__constant ushort PERM_WORDS\\[12\\] = \\{.*?\\};$"
+    # Match the PERM_WORDS line (no leading whitespace expected in the kernel file)
+    pattern = r"^__constant ushort PERM_WORDS\[12\] = \{.*?\};$"
     replacement = format_perm_words(indices)
     new_text, n = re.subn(pattern, replacement, text, flags=re.MULTILINE)
     if n != 1:
-        raise SystemExit("Failed to find PERM_WORDS line to replace")
+        raise SystemExit(f"Failed to find PERM_WORDS line to replace in {args.kernel}")
     kernel_path.write_text(new_text, encoding="utf-8")
 
 
